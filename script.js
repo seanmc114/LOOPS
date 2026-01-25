@@ -189,10 +189,10 @@ function wordFixesES(s){
   // Word-by-word fixes
   fixed = fixed.replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)\b/g, (w)=>{
     const key = w.toLowerCase();
-    if(COACH_COACH_COACH_ES_FIX[key]){
+    if(COACH_COACH_ES_FIX[key]){
       out.push(`${w} → ${COACH_COACH_ES_FIX[key]}`);
       // preserve initial cap
-      const rep = COACH_COACH_COACH_ES_FIX[key];
+      const rep = COACH_COACH_ES_FIX[key];
       return (w[0]===w[0].toUpperCase()) ? (rep[0].toUpperCase()+rep.slice(1)) : rep;
     }
     return w;
@@ -937,10 +937,54 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return a;
   }
 
+  function isConnectorPrompt(p){
+    if(!p) return false;
+    const badge = String(p.badge||"").toLowerCase();
+    if(badge==="structure" || badge==="connector" || badge==="connectors" || badge==="link") return true;
+    const txt = String(p.text||"").toLowerCase();
+    // Common connector cues across languages
+    return /(because|so that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in addition|on the other hand)/.test(txt);
+  }
+
+  function connectorCapForLevel(level){
+    const lvl = Number(level)||1;
+    if(lvl<=2) return 2;
+    if(lvl===3) return 3;
+    if(lvl<=5) return 4;
+    return 5;
+  }
+
   function samplePrompts(themeId){
     const t = THEME_BY_ID[themeId] || THEMES[0];
     const pool = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
-    return shuffle(pool).slice(0, PROMPTS_PER_ROUND);
+    const lvl = Number(state.level)||1;
+
+    // Split connector-ish prompts so early levels don't become "connector-only"
+    const connectors = [];
+    const others = [];
+    for(const p of shuffle(pool)){
+      (isConnectorPrompt(p) ? connectors : others).push(p);
+    }
+
+    const cap = connectorCapForLevel(lvl);
+    const out = [];
+
+    // Take up to cap connectors first (if available), then fill with others.
+    out.push(...connectors.slice(0, Math.min(cap, connectors.length)));
+    const remaining = PROMPTS_PER_ROUND - out.length;
+    out.push(...others.slice(0, Math.min(remaining, others.length)));
+
+    // If still short, top up from remaining connectors/others
+    if(out.length < PROMPTS_PER_ROUND){
+      const need = PROMPTS_PER_ROUND - out.length;
+      out.push(...connectors.slice(out.filter(isConnectorPrompt).length, out.filter(isConnectorPrompt).length + need));
+    }
+    if(out.length < PROMPTS_PER_ROUND){
+      const need = PROMPTS_PER_ROUND - out.length;
+      out.push(...others.slice(out.filter(p=>!isConnectorPrompt(p)).length, out.filter(p=>!isConnectorPrompt(p)).length + need));
+    }
+
+    return shuffle(out).slice(0, PROMPTS_PER_ROUND);
   }
 
   function startRound(){
@@ -1060,6 +1104,8 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     state.elapsedMs = Date.now() - state.startedAt;
     if(el.aiStatusText) el.aiStatusText.textContent = "Marking with coach…";
 
+    try{
+
     const rubric = levelRubric(state.level);
     const payload = {
       lang: state.lang,
@@ -1161,10 +1207,17 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   renderResults();
   show("results");
 
+
   // Coach intermission (tap to continue)
   showCoachIntermission();
-  state.isMarking = false;
-  // Nav stays off because we're in results; it will be reset on startRound.
+    }catch(err){
+      console.error(err);
+      try{ toast("Coach glitch — press Finish again, or Quit."); }catch(_){}
+      state.roundFinished = false;
+    }finally{
+      state.isMarking = false;
+      setNavLocked(false);
+    }
 }
 
   function showCoachIntermission(){
