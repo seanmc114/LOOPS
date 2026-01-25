@@ -1231,3 +1231,15 @@ body::after{
   .wsChoice{ font-size:16px; padding:16px 14px; width:100%; }
   .wsChoices{ flex-direction:column; }
 }
+
+
+/* Results: correction toggle */
+.miniRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+  margin-bottom:8px;
+  flex-wrap:wrap;
+}
+.miniHint{ font-size:12px; opacity:0.8; }

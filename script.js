@@ -18,37 +18,52 @@
 const LS_NAME = "loops_playerName_v1";
 const LS_REWARDS = "loops_rewards_v1"; // {coins:number, loot:{[id]:true}, last:{...}}
 const COACH = {
-  name: "Coach Coggs",
-  avatar: "🧑‍🏫",
+  // A loose, football‑manager caricature: stern, funny, obsessed with standards.
+  name: "Coach El Mister",
+  avatar: "🧥⚽",
   praise: [
-    "Lovely stuff.",
-    "That’s solid work.",
-    "Nice control there.",
-    "Good instincts.",
-    "That’s a strong round."
+    "Bien. That’s a proper performance.",
+    "Good. You did the work — now keep it.",
+    "Solid. No nonsense.",
+    "That’s control. I like control.",
+    "You’re improving. Don’t get comfortable."
   ],
   push: [
-    "I’m not letting you off the hook though.",
-    "We can sharpen one thing and you’ll fly.",
-    "One tweak and this jumps a level.",
-    "Small fix, big payoff.",
-    "We fix this and you’re dangerous."
+    "Standards. We raise them every round.",
+    "Details win matches. You want wins, yes?",
+    "Same energy — cleaner language.",
+    "One weakness. We fix it. Then we move.",
+    "You’re close. But close is not the score."
   ],
   jail: [
-    "Right — training time. No panic. Just reps.",
-    "Gym. Now. Quick fix, then you’re free.",
-    "We’re going into the machine room. Earn your exit.",
-    "Coach’s call: Gym. You’ll thank me in 2 minutes.",
-    "Jeopardy mode: you’re in… until you improve."
+    "Gym. Not punishment — preparation.",
+    "We train what cost you points. Now.",
+    "No drama. Just reps. Earn the exit.",
+    "You want freedom? Show me control.",
+    "Back in the tunnel. Quick session, then out."
   ],
   release: [
-    "Released. That’s improvement.",
-    "Good. You earned it.",
-    "Exit unlocked — back to business.",
+    "Good. You earned your exit.",
     "That’s the standard. Keep it.",
-    "Free to go. Don’t lose that form."
+    "Unlocked. Now play like that again.",
+    "Better. Now don’t lose it.",
+    "Exit open. Next round — same discipline."
+  ],
+  // Short “matchday” warnings per level (used in coach messages).
+  levelWarnings: [
+    "Level 1: keep it simple — one clean sentence + one detail.",
+    "Level 2: watch the verb you need (ser/estar) — don’t dodge it.",
+    "Level 3: add a connector, but only if it’s correct.",
+    "Level 4: connectors matter now — because/but/and, choose the right one.",
+    "Level 5: agreements — gender/number. No lazy endings.",
+    "Level 6: opinions need reasons — don’t just say 'good'.",
+    "Level 7: comparisons — more/less/as…as. Keep it tidy.",
+    "Level 8: plans — future forms. No guessing.",
+    "Level 9: sequence — first/then/after. Make it flow.",
+    "Boss: variety — detail + structure + accuracy."
   ]
 };
+
 
 function getPlayerName(){
   return (localStorage.getItem(LS_NAME) || "").trim();
@@ -174,10 +189,10 @@ function wordFixesES(s){
   // Word-by-word fixes
   fixed = fixed.replace(/\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+)\b/g, (w)=>{
     const key = w.toLowerCase();
-    if(COACH_COACH_ES_FIX[key]){
-      out.push(`${w} → ${COACH_ES_FIX[key]}`);
+    if(COACH_COACH_COACH_ES_FIX[key]){
+      out.push(`${w} → ${COACH_COACH_ES_FIX[key]}`);
       // preserve initial cap
-      const rep = COACH_COACH_ES_FIX[key];
+      const rep = COACH_COACH_COACH_ES_FIX[key];
       return (w[0]===w[0].toUpperCase()) ? (rep[0].toUpperCase()+rep.slice(1)) : rep;
     }
     return w;
@@ -207,32 +222,80 @@ function detectTags(prompt, answer, lang, rubric){
   const wc = countWords(answer);
   if(wc < (rubric?.minWords||6)) tags.push("too_short");
 
+  // Helper: quick Spanish-ish normaliser for tiny regex checks
+  const low = String(answer||"").toLowerCase();
+
   if(lang==="es"){
     const fx = wordFixesES(answer);
     if(fx.changes.length){
       tags.push("spelling");
       examples.push(...fx.changes.slice(0,3));
     }
-    // missing be (very simple): adjective present but no es/está/son/soy etc
-    const a = String(answer||"").toLowerCase();
-    const hasAdj = /(grande|pequeñ[oa]|bonit[oa]|interesante|divertid[oa]|alto|bajo|simpátic[oa]|trabajador[oa]|difícil|fácil)/.test(a);
-    const hasBe = /\b(es|está|estoy|eres|son|somos|están|era|eran|fue|eran)\b/.test(a);
+
+    // --- Verb form / word order (high value for learners) ---
+    if(/\byo\s+es\b/.test(low)){ tags.push("verb_form"); examples.push("yo es → yo soy"); }
+    if(/\byo\s+tiene\b/.test(low)){ tags.push("verb_form"); examples.push("yo tiene → yo tengo"); }
+    if(/\byo\s+gusta\b/.test(low)){ tags.push("word_order"); tags.push("verb_form"); examples.push("yo gusta → me gusta"); }
+    if(/\bme\s+gusto\b/.test(low)){ tags.push("verb_form"); examples.push("me gusto → me gusta"); }
+
+    // Subject + wrong 'to be' (very common early error)
+    if(/\bmi\s+(madre|padre|amigo|amiga|profesor|profesora)\s+soy\b/.test(low)){
+      tags.push("verb_form");
+      examples.push("X soy → X es");
+    }
+
+    // --- Articles / gender (simple, targeted) ---
+    const femNouns = /(casa|habitaci[oó]n|clase|escuela|familia|madre|hermana|ciudad|m[uú]sica|comida)/;
+    const mascNouns = /(colegio|instituto|padre|hermano|amigo|pueblo|deporte|f[uú]tbol)/;
+
+    const badElFem = new RegExp(`\\b(el|un)\\s+${femNouns.source}\\b`, "i");
+    const badLaMasc = new RegExp(`\\b(la|una)\\s+${mascNouns.source}\\b`, "i");
+    const m1 = low.match(badElFem);
+    const m2 = low.match(badLaMasc);
+    if(m1){
+      tags.push("articles_gender");
+      examples.push(`${m1[1]} ${m1[2]} → ${m1[1].toLowerCase()==="el" ? "la" : "una"} ${m1[2]}`);
+    }
+    if(m2){
+      tags.push("articles_gender");
+      examples.push(`${m2[1]} ${m2[2]} → ${m2[1].toLowerCase()==="la" ? "el" : "un"} ${m2[2]}`);
+    }
+
+    // --- Missing 'to be' (keep, but only if it’s truly missing) ---
+    const hasAdj = /(grande|pequeñ[oa]|bonit[oa]|interesante|divertid[oa]|alto|bajo|simpátic[oa]|trabajador[oa]|difícil|fácil)/.test(low);
+    const hasBe = /\b(es|está|estoy|eres|son|somos|están|era|eran|fue|fui)\b/.test(low);
     if(hasAdj && !hasBe) tags.push("missing_be");
 
-    // connector opportunity (only if long enough)
-    const hasConn = /\b(y|pero|porque|además|entonces|también)\b/.test(a);
-    if(wc >= 9 && !hasConn) tags.push("no_connector");
+    // --- Connector (ONLY when the rubric/level expects it) ---
+    const needsConn = !!(rubric && rubric.requireConnector);
+    const promptNeedsConn = /because|why|reasons|first|then|after|opinion|plans|story|sequence/i.test(String(prompt||""));
+    const hasConn = /\b(y|pero|porque|además|entonces|también|ya\s+que|sin\s+embargo)\b/.test(low);
+    if((needsConn || promptNeedsConn) && wc >= Math.max(8, (rubric?.minWords||6)) && !hasConn){
+      tags.push("no_connector");
+    }
+
+    // Mild article prompt: "hay X" usually wants "hay un/una X" at JC level
+    if((rubric && Number(rubric.minWords||0) >= 5) && /\bhay\s+\w+\b/.test(low) && !/\bhay\s+(un|una)\b/.test(low)){
+      // only nudge if they’re clearly describing a room/place
+      if(/\b(habitaci[oó]n|casa|clase|escuela)\b/.test(low)){
+        tags.push("articles");
+        examples.push("hay X → hay un/una X");
+      }
+    }
   }
 
-  // If nothing else, recommend detail only (but as a fallback)
   if(tags.length===0) tags.push("detail");
-
   return {tags, examples};
 }
+
 
 function focusLabel(tag, lang){
   const L = lang || "es";
   if(tag==="spelling") return (L==="es") ? "Spelling & accents" : "Spelling";
+  if(tag==="verb_form") return "Verb forms";
+  if(tag==="articles_gender") return "Articles & gender";
+  if(tag==="word_order") return "Word order";
+  if(tag==="articles") return "Articles";
   if(tag==="missing_be") return "Missing ‘to be’";
   if(tag==="no_connector") return "Connectors";
   if(tag==="too_short") return "More detail";
@@ -252,7 +315,7 @@ function pickRoundFocus(items, lang, rubric){
     });
   });
 
-  const priority = ["spelling","missing_be","too_short","no_connector","detail"];
+  const priority = ["spelling","verb_form","articles_gender","word_order","missing_be","articles","too_short","no_connector","detail"];
   let best = null;
   let bestCount = 0;
   priority.forEach(t=>{
@@ -381,6 +444,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     scoreOut: $("scoreOut"),
     targetOut: $("targetOut"),
     coachFocus: $("coachFocus"),
+    toggleFeedbackBtn: $("toggleFeedbackBtn"),
     feedbackList: $("feedbackList"),
     playAgainBtn: $("playAgainBtn"),
     workshopBtn: $("workshopBtn"),
@@ -663,6 +727,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     level: 1, // 1..10 within theme
     mode: "classic",
     lang: "es",
+    showCorrections: false,
     prompts: [],
     idx: 0,
     answers: [],
@@ -901,7 +966,17 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     if(el.progressFill) el.progressFill.style.width = `${((state.idx+1)/PROMPTS_PER_ROUND)*100}%`;
 
     if(el.tagCap) el.tagCap.textContent = (state.mode==="sprint") ? "Sprint cap: 90s" : `Penalty: +${PENALTY_SEC}s`;
-    if(el.tagTips) el.tagTips.textContent = `Tip: add detail + one connector`;
+    if(el.tagTips){
+      const lvl = Number(state.level)||1;
+      const badge = (state.prompts && state.prompts[state.idx] && state.prompts[state.idx].badge) ? state.prompts[state.idx].badge : "";
+      if(lvl<=2){
+        el.tagTips.textContent = "Tip: one clean sentence + one detail.";
+      }else if(lvl<=4){
+        el.tagTips.textContent = (badge==="structure") ? "Tip: add ONE connector (y/pero/porque) to link ideas." : "Tip: add one extra detail — connector only if it fits.";
+      }else{
+        el.tagTips.textContent = "Tip: accuracy first (verbs/articles), then flow (connectors).";
+      }
+    }
     if(el.nextBtn && !state.isMarking){ el.nextBtn.textContent = (state.idx < PROMPTS_PER_ROUND-1) ? "Next" : "Finish"; }
     if(el.prevBtn && !state.isMarking){ el.prevBtn.disabled = (state.idx===0); }
   }
@@ -1082,6 +1157,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return {...it, suggestion: sugg, why};
   });
 
+  state.showCorrections = false;
   renderResults();
   show("results");
 
@@ -1105,9 +1181,51 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   const reward = state.lastReward;
   const rewardHtml = reward ? `<div class="muted" style="margin-top:8px"><b>Prize:</b> +${reward.coins} ⚡${reward.loot?` • ${escapeHtml(reward.loot.name)}`:""}</div>` : "";
 
+
+  // One concrete example: what you wrote vs what 'correct' looks like
+  const ref =
+       (m.items||[]).find(it=> (it.tags||[]).includes(m.focusTag) && !it.ok)
+    || (m.items||[]).find(it=> !it.ok)
+    || (m.items||[])[0];
+
+  const wrote = ref ? escapeHtml(ref.answer||"") : "";
+  const model = ref ? escapeHtml(ref.suggestion||"") : "";
+
+  const focusTag = m.focusTag || "detail";
+  const reasonMap = {
+    spelling: "Spelling/accents cost easy points. Fix them and everything reads smarter.",
+    verb_form: "Wrong verb form breaks the sentence. We fix the engine first.",
+    articles_gender: "Articles/gender are small, but they shout 'beginner' when wrong. We tighten them up.",
+    articles: "Articles make Spanish sound natural (un/una, el/la).",
+    word_order: "Word order changes meaning. Get the pattern, then it’s automatic.",
+    missing_be: "You need the ‘to be’ verb to make descriptions work.",
+    no_connector: "Your ideas need linking. One correct connector makes it flow.",
+    too_short: "Too short = no marks. Add one detail and you jump up.",
+    detail: "Detail wins marks. One extra fact is the difference."
+  };
+
+  const drillMap = {
+    spelling: "Drill: clean spelling/accents.",
+    verb_form: "Drill: verb forms (soy/tengo/me gusta).",
+    articles_gender: "Drill: articles + gender (el/la).",
+    articles: "Drill: articles (un/una, el/la).",
+    word_order: "Drill: word order patterns.",
+    missing_be: "Drill: ‘to be’ (ser/estar).",
+    no_connector: "Drill: connectors (y/pero/porque…).",
+    too_short: "Drill: add one extra detail.",
+    detail: "Drill: add one extra detail."
+  };
+
+  const reasonText = reasonMap[focusTag] || "We fix one thing, properly.";
+  const drillText  = drillMap[focusTag]  || "Drill: quick reps.";
+  const warn = (COACH.levelWarnings && COACH.levelWarnings[(Number(state.level)||1)-1]) ? COACH.levelWarnings[(Number(state.level)||1)-1] : "";
+
   const sub = m.passed ? `Nice one, ${escapeHtml(name)}.` : `Right ${escapeHtml(name)} — quick fix time.`;
   const html = `
     <div><b>${escapeHtml(vibe)}</b> ${nudge?escapeHtml(nudge):""}</div>
+    <div class="muted" style="margin-top:6px"><b>Coach diagnosis:</b> ${escapeHtml(reasonText)}</div>
+    <div class="muted" style="margin-top:6px"><b>${escapeHtml(drillText)}</b>${warn?` <span style="opacity:.85">• ${escapeHtml(warn)}</span>`:""}</div>
+    ${ (wrote && model) ? `<div class="muted" style="margin-top:8px"><b>You wrote:</b> ${wrote}<br><b>Coach wants:</b> ${model}</div>` : "" }
     <div class="muted" style="margin-top:6px">
       Focus: <b>${escapeHtml(focus)}</b>
       <span class="muted"> • </span>
@@ -1156,31 +1274,41 @@ function renderResults(){
 
     if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
 
+    if(el.toggleFeedbackBtn){
+      el.toggleFeedbackBtn.textContent = state.showCorrections ? "Hide Corrections" : "Show Corrections";
+    }
+
     if(el.feedbackList){
-      el.feedbackList.innerHTML="";
-      m.items.forEach(it=>{
-        const card=document.createElement("div");
-        card.className="fbCard";
-        card.innerHTML = `
-          <div class="fbTop">
-            <div class="fbNum">${it.n}</div>
-            <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
-            <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
-          </div>
-          <div class="fbBody">
-            <div class="fbBox">
-              <div class="fbLabel">Your answer</div>
-              <div class="fbText">${escapeHtml(it.answer)}</div>
+      if(!state.showCorrections){
+        el.feedbackList.classList.add("hidden");
+        el.feedbackList.innerHTML = "";
+      }else{
+        el.feedbackList.classList.remove("hidden");
+        el.feedbackList.innerHTML="";
+        m.items.forEach(it=>{
+          const card=document.createElement("div");
+          card.className="fbCard";
+          card.innerHTML = `
+            <div class="fbTop">
+              <div class="fbNum">${it.n}</div>
+              <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
+              <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
             </div>
-            <div class="fbBox">
-              <div class="fbLabel">Suggested upgrade</div>
-              <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
+            <div class="fbBody">
+              <div class="fbBox">
+                <div class="fbLabel">Your answer</div>
+                <div class="fbText">${escapeHtml(it.answer)}</div>
+              </div>
+              <div class="fbBox">
+                <div class="fbLabel">Coach model (what “correct” looks like)</div>
+                <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
+              </div>
             </div>
-          </div>
-          <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
-        `;
-        el.feedbackList.appendChild(card);
-      });
+            <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
+          `;
+          el.feedbackList.appendChild(card);
+        });
+      }
     }
 
     if(el.workshopBtn) el.workshopBtn.textContent = state.gymRequired ? "Gym" : "Gym (optional)";
@@ -1210,6 +1338,9 @@ function gymFocusType(){
   // Prefer explicit tag chosen by coach
   const tag = state.workshop.focusTag || "";
   if(tag==="spelling") return "spelling";
+  if(tag==="verb_form") return "verbs";
+  if(tag==="articles_gender" || tag==="articles") return "gender";
+  if(tag==="word_order") return "order";
   if(tag==="missing_be") return "be";
   if(tag==="no_connector") return "connector";
   if(tag==="too_short" || tag==="detail") return "detail";
@@ -1328,6 +1459,85 @@ if(type==="spelling"){
   if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: clean spelling + accents." : "Aim: clean spelling.";
 }
 else
+if(type==="verbs"){
+  if(el.wsPrompt) el.wsPrompt.textContent = (L==="es") ? "Pick the correct verb form (no guessing)." :
+                                        (L==="fr") ? "Choisis la bonne forme du verbe." :
+                                                     "Wähle die richtige Verbform.";
+  // Simple high-impact set: be / have / like
+  const sets = (L==="es") ? [
+      {good:"Yo soy simpático.", bad:["Yo es simpático.","Yo estoy simpático."]},
+      {good:"Yo tengo un perro.", bad:["Yo tiene un perro.","Yo tener un perro."]},
+      {good:"Me gusta el fútbol.", bad:["Yo gusta el fútbol.","Me gusto el fútbol."]},
+    ] :
+    (L==="fr") ? [
+      {good:"Je suis sympa.", bad:["Je est sympa.","Je suis sympa"]},
+      {good:"J’ai un chien.", bad:["Je a un chien.","Je suis un chien."]},
+      {good:"J’aime le sport.", bad:["Je aime le sport.","J’aime le sport"]},
+    ] :
+    [
+      {good:"Ich bin nett.", bad:["Ich ist nett.","Ich haben nett."]},
+      {good:"Ich habe einen Hund.", bad:["Ich hat einen Hund.","Ich haben ein Hund."]},
+      {good:"Ich mag Sport.", bad:["Ich magt Sport.","Ich mögen Sport."]},
+    ];
+  const s = sets[Math.floor(Math.random()*sets.length)];
+  const opts = shuffle([s.good, ...s.bad, tidySuggestion(s.good.replace(".", " und sehr fleißig."))]).slice(0,4);
+  opts.forEach(o=>{
+    const b=document.createElement("button");
+    b.className="wsChoice"; b.type="button"; b.textContent=o;
+    b.addEventListener("click", ()=> gymMark(o===s.good || o.startsWith(s.good.slice(0,-1)), (o===s.good || o.startsWith(s.good.slice(0,-1))) ? "Yes — correct verb form." : "No — pick the option with the correct verb form."));
+    el.wsChoices.appendChild(b);
+  });
+  if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: correct verb form (soy/tengo/me gusta)." : "Aim: correct verb form.";
+}
+else
+if(type==="gender"){
+  if(L!=="es"){
+    // For now, keep this Spanish‑focused; other languages get detail reps.
+    state.workshop.focusTag = "detail";
+    nextGymDrill();
+    return;
+  }
+  if(el.wsPrompt) el.wsPrompt.textContent = "Pick the correct article + noun (gender matters).";
+  const fem = ["casa","habitación","clase","escuela","familia","ciudad"];
+  const masc = ["colegio","instituto","padre","hermano","amigo","pueblo"];
+  const isFem = Math.random() < 0.5;
+  const noun = (isFem ? fem : masc)[Math.floor(Math.random()*(isFem?fem.length:masc.length))];
+  const good = isFem ? `la ${noun}` : `el ${noun}`;
+  const bad1 = isFem ? `el ${noun}` : `la ${noun}`;
+  const bad2 = isFem ? `un ${noun}` : `una ${noun}`;
+  const bad3 = isFem ? `una ${noun}` : `un ${noun}`;
+  const opts = shuffle([good, bad1, bad2, bad3]).slice(0,4);
+  opts.forEach(o=>{
+    const b=document.createElement("button");
+    b.className="wsChoice"; b.type="button"; b.textContent=o;
+    b.addEventListener("click", ()=> gymMark(o===good, o===good ? "Correct — article matches the noun." : "Not quite — match the article to the noun’s gender."));
+    el.wsChoices.appendChild(b);
+  });
+  if(el.wsHelp) el.wsHelp.textContent = "Aim: el + masculine, la + feminine.";
+}
+else
+if(type==="order"){
+  if(L!=="es"){
+    state.workshop.focusTag = "detail";
+    nextGymDrill();
+    return;
+  }
+  if(el.wsPrompt) el.wsPrompt.textContent = "Pick the correct word order (me gusta…).";
+  const good = "Me gusta el fútbol porque es divertido.";
+  const bad1 = "Yo gusta el fútbol porque es divertido.";
+  const bad2 = "Me gusto el fútbol porque es divertido.";
+  const bad3 = "Gusta me el fútbol porque es divertido.";
+  const opts = shuffle([good,bad1,bad2,bad3]).slice(0,4);
+  opts.forEach(o=>{
+    const b=document.createElement("button");
+    b.className="wsChoice"; b.type="button"; b.textContent=o;
+    b.addEventListener("click", ()=> gymMark(o===good, o===good ? "Perfect — that’s the order." : "No — pick the sentence with the correct order."));
+    el.wsChoices.appendChild(b);
+  });
+  if(el.wsHelp) el.wsHelp.textContent = "Aim: Me gusta + noun (not 'yo gusta').";
+}
+
+else
 if(type==="connector"){
         if(el.wsPrompt) el.wsPrompt.textContent = "Pick the best connector to upgrade the sentence.";
         const connector = conj[Math.floor(Math.random()*conj.length)];
@@ -1422,6 +1632,34 @@ if(type==="spelling"){
                           "Type the corrected version (spelling).";
   if(el.wsHelp) el.wsHelp.textContent = (state.lang==="es") ? `Target: ${String(fx.fixed||"").trim()}` : "Fix spelling cleanly.";
 } else
+if(type==="verbs"){
+  if(el.wsPrompt) el.wsPrompt.textContent =
+    (L==="es") ? "Type ONE clean sentence with a correct verb form (soy / tengo / me gusta)." :
+    (L==="fr") ? "Tape UNE phrase avec une forme correcte (je suis / j’ai / j’aime)." :
+                 "Schreibe EINEN Satz mit korrekter Verbform (ich bin / ich habe / ich mag).";
+  if(el.wsHelp) el.wsHelp.textContent =
+    (L==="es") ? "Example: Tengo un perro. / Me gusta el fútbol." :
+    (L==="fr") ? "Exemple: J’ai un chien. / J’aime le sport." :
+                 "Beispiel: Ich habe einen Hund. / Ich mag Sport.";
+} else
+if(type==="gender"){
+  if(L!=="es"){
+    state.workshop.focusTag = "detail";
+    nextGymDrill();
+    return;
+  }
+  if(el.wsPrompt) el.wsPrompt.textContent = "Type a correct phrase with article + noun (e.g., la casa / el colegio).";
+  if(el.wsHelp) el.wsHelp.textContent = "Aim: la casa, la habitación, el colegio, el instituto…";
+} else
+if(type==="order"){
+  if(L!=="es"){
+    state.workshop.focusTag = "detail";
+    nextGymDrill();
+    return;
+  }
+  if(el.wsPrompt) el.wsPrompt.textContent = "Type ONE sentence using 'me gusta' correctly.";
+  if(el.wsHelp) el.wsHelp.textContent = "Example: Me gusta el fútbol porque es divertido.";
+} else
 if(type==="connector"){
       if(el.wsPrompt) el.wsPrompt.textContent = (L==="es") ? "Type ONE sentence using y/pero/porque." :
                                                (L==="fr") ? "Tape UNE phrase avec et/mais/parce que." :
@@ -1474,6 +1712,52 @@ if(type==="spelling"){
   msgOk = "Clean — spelling fixed.";
   msgNo = "Try again: type the corrected version (with accents).";
 } else
+if(type==="verbs"){
+  const L = state.lang;
+  if(L==="es"){
+    ok = val.length >= 8 && (/(\bsoy\b)/i.test(val) || /(\btengo\b)/i.test(val) || /(\bme\s+gusta\b)/i.test(val));
+    msgOk = "Good — correct verb form.";
+    msgNo = "Try again: include soy / tengo / me gusta (correctly).";
+  }else if(L==="fr"){
+    ok = val.length >= 8 && (/(\bsuis\b)/i.test(val) || /(\bj['’]?ai\b|\bai\b)/i.test(val) || /(\bj['’]?aime\b|\baime\b)/i.test(val));
+    msgOk = "Bien — forme correcte.";
+    msgNo = "Essaie encore : suis / j’ai / j’aime.";
+  }else{
+    ok = val.length >= 8 && (/(\bbin\b)/i.test(val) || /(\bhabe\b)/i.test(val) || /(\bmag\b)/i.test(val));
+    msgOk = "Gut — richtige Verbform.";
+    msgNo = "Nochmal: bin / habe / mag.";
+  }
+} else
+if(type==="gender"){
+  if(state.lang!=="es"){
+    ok = countWords(val) >= 6;
+    msgOk = "Good.";
+    msgNo = "Try a short phrase with an article.";
+  }else{
+    const low = val.toLowerCase();
+    const m = low.match(/\b(el|la|un|una)\s+(casa|habitaci[oó]n|clase|escuela|familia|ciudad|colegio|instituto|padre|hermano|amigo|pueblo)\b/);
+    if(!m){ ok=false; }
+    else{
+      const art=m[1], noun=m[2];
+      const fem = /^(casa|habitaci[oó]n|clase|escuela|familia|ciudad)$/.test(noun);
+      const masc = /^(colegio|instituto|padre|hermano|amigo|pueblo)$/.test(noun);
+      ok = (fem && (art==="la" || art==="una")) || (masc && (art==="el" || art==="un"));
+    }
+    msgOk = "Correct — article matches gender.";
+    msgNo = "Try again: match el/la (or un/una) to the noun.";
+  }
+} else
+if(type==="order"){
+  if(state.lang!=="es"){
+    ok = countWords(val) >= 6;
+    msgOk = "Good.";
+    msgNo = "Try a clean sentence.";
+  }else{
+    ok = /(\bme\s+gusta\b)/i.test(val) && val.length >= 10;
+    msgOk = "Perfect — correct order.";
+    msgNo = "Try again: use 'me gusta' (not 'yo gusta').";
+  }
+} else
 if(type==="connector"){
       ok = val.length >= 12 && connectorPresent(val);
       msgOk = "Great — connector spotted!";
@@ -1521,6 +1805,7 @@ if(el.rewardOk){
     if(el.quitBtn) el.quitBtn.addEventListener("click", ()=>{ clearInterval(state.timer); state.isMarking=false; state.roundFinished=false; show("home"); renderThemeTiles(); });
     if(el.playAgainBtn) el.playAgainBtn.addEventListener("click", ()=> startRound());
     if(el.workshopBtn) el.workshopBtn.addEventListener("click", ()=> openGymFromResults());
+    if(el.toggleFeedbackBtn) el.toggleFeedbackBtn.addEventListener("click", ()=>{ state.showCorrections = !state.showCorrections; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"smooth", block:"start"}); }catch(_){ } });
     if(el.homeBtn) el.homeBtn.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
     if(el.wsBackResults) el.wsBackResults.addEventListener("click", ()=> show("results"));
     if(el.wsHome) el.wsHome.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
