@@ -435,6 +435,21 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     if (s) s.classList.remove("hidden");
   }
 
+  // Lock/unlock game navigation during marking/transitions.
+  // (A missing definition here previously could leave the player stuck on Q10.)
+  function setNavLocked(locked){
+    const L = !!locked;
+    let atStart = false;
+    try{ atStart = (state && state.idx===0); }catch(_){ atStart = false; }
+    if(el.prevBtn) el.prevBtn.disabled = L || atStart;
+    if(el.nextBtn) el.nextBtn.disabled = L;
+    if(el.quitBtn) el.quitBtn.disabled = L;
+
+    // Disable the active input if present
+    const input = document.getElementById("mainInput");
+    if(input) input.disabled = L;
+  }
+
   // -------- Normalisation helpers --------
   const ACC = {"á":"a","é":"e","í":"i","ó":"o","ú":"u","ü":"u","ñ":"n","Á":"A","É":"E","Í":"I","Ó":"O","Ú":"U","Ü":"U","Ñ":"N"};
   const stripAccents = (s)=> String(s||"").split("").map(ch=>ACC[ch]||ch).join("");
