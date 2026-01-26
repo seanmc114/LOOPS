@@ -386,25 +386,72 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
         return wordFixesES(fixed).fixed;
       }
     }
-    // Detail focus: add ONE extra detail, varied
+    // Detail focus: add ONE extra detail, varied (but CONTEXTUAL — no random armarios in a “person” answer)
     if(focusTag==="too_short" || focusTag==="detail"){
       const starters = ["También", "Además", "Y", "Porque"];
-      const addOns = [
-        "tengo un armario.",
-        "hay una ventana.",
-        "es bastante moderno.",
-        "me gusta mucho.",
-        "es muy cómodo.",
-        "tiene muchos libros.",
-        "hay un patio grande.",
-        "es interesante para mí."
-      ];
       const st = starters[Math.floor(Math.random()*starters.length)];
+
+      const ptxt = String(prompt||"").toLowerCase();
+      // crude topic detection (enough to stop surreal nonsense)
+      const isPerson = /(person|friend|teacher|admire|someone|people|my mum|my dad|mi amigo|mi profesora)/.test(ptxt);
+      const isPlace  = /(house|home|bedroom|room|classroom|school|town|city|colegio|escuela|habitación|casa|clase|pueblo|ciudad)/.test(ptxt);
+      const isRoutine= /(routine|day|weekend|usually|normally|cada|todos los días|por la mañana)/.test(ptxt);
+      const isFood   = /(eat|food|comida|desayuno|almuerzo|cena)/.test(ptxt);
+
+      let addOns;
+      if(isPerson){
+        addOns = [
+          "es muy trabajador.",
+          "es muy amable.",
+          "es divertido y paciente.",
+          "me ayuda mucho.",
+          "porque es una buena persona.",
+          "porque siempre escucha.",
+          "tiene un buen sentido del humor.",
+          "es bastante responsable."
+        ];
+      }else if(isRoutine){
+        addOns = [
+          "normalmente me levanto temprano.",
+          "por la mañana voy al colegio.",
+          "después hago los deberes.",
+          "por la tarde juego al fútbol.",
+          "los fines de semana descanso.",
+          "a veces estudio con mis amigos."
+        ];
+      }else if(isFood){
+        addOns = [
+          "porque es saludable.",
+          "y también bebo agua.",
+          "además me gusta la fruta.",
+          "porque tiene buen sabor.",
+          "pero no me gusta la comida rápida."
+        ];
+      }else if(isPlace){
+        addOns = [
+          "hay una ventana grande.",
+          "es bastante moderno.",
+          "me gusta mucho.",
+          "es muy cómodo.",
+          "tiene muchos libros.",
+          "hay un patio grande.",
+          "es luminoso y ordenado."
+        ];
+      }else{
+        addOns = [
+          "es bastante interesante.",
+          "me gusta mucho.",
+          "porque es divertido.",
+          "y además es muy útil.",
+          "pero a veces es difícil."
+        ];
+      }
+
       const ad = addOns[Math.floor(Math.random()*addOns.length)];
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
       return `${base} ${st} ${ad[0].toLowerCase()+ad.slice(1)}`;
     }
-    // Connector focus
+// Connector focus
     if(focusTag==="no_connector"){
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
       const conns = ["porque","pero","y","además"];
@@ -764,6 +811,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     mode: "classic",
     lang: "es",
     showCorrections: false,
+    promptHistory: {}, // themeId -> [promptKey,...] recent to reduce repetition
     prompts: [],
     idx: 0,
     answers: [],
@@ -837,8 +885,20 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   }
 
   // -------- Unlock targets --------
-  function unlockTargetForLevel(level){ return Math.max(150, 220 - (Number(level)||1) * 7); }
-  function roundPassesUnlock(wrong, score, level){ return (wrong <= 2) && (score <= unlockTargetForLevel(level)); }
+  function unlockTargetForLevel(level){
+  // Time target gets tighter as levels rise (still achievable). Seconds.
+  const lvl = Math.max(1, Math.min(10, Number(level)||1));
+  return Math.max(140, 230 - (lvl * 9));
+}
+function allowedWrong(level){
+  const lvl = Math.max(1, Math.min(10, Number(level)||1));
+  if(lvl <= 2) return 3;
+  if(lvl <= 7) return 2;
+  return 1; // 8–10
+}
+function roundPassesUnlock(wrong, score, level){
+  return (wrong <= allowedWrong(level)) && (score <= unlockTargetForLevel(level));
+}
 
   // -------- Gym scaling --------
   function gymTarget(level, wrong){
@@ -993,8 +1053,34 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function samplePrompts(themeId){
     const t = THEME_BY_ID[themeId] || THEMES[0];
-    const pool = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
+    const poolRaw = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
     const lvl = Number(state.level)||1;
+
+    const keyOf = (p)=> norm((p && p.text) ? p.text : "");
+    const isMeaningfulPrompt = (p)=>{
+      const k = keyOf(p);
+      if(!k) return false;
+      // treat dash placeholders as empty
+      if(/^[-–—]+$/.test(k)) return false;
+      return true;
+    };
+
+    // De-duplicate the pool by prompt text so a round can't pull the same prompt twice
+    const seenPool = new Set();
+    const pool = [];
+    for(const p of poolRaw){
+      if(!isMeaningfulPrompt(p)) continue;
+      const k = keyOf(p);
+      if(seenPool.has(k)) continue;
+      seenPool.add(k);
+      pool.push(p);
+    }
+
+    // Track recent prompts per theme to reduce repetition across plays
+    if(!state.promptHistory) state.promptHistory = {};
+    if(!state.promptHistory[themeId]) state.promptHistory[themeId] = [];
+    const hist = state.promptHistory[themeId];
+    const histSet = new Set(hist);
 
     // Split connector-ish prompts so early levels don't become "connector-only"
     const connectors = [];
@@ -1004,25 +1090,52 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     }
 
     const cap = connectorCapForLevel(lvl);
-    const out = [];
 
-    // Take up to cap connectors first (if available), then fill with others.
-    out.push(...connectors.slice(0, Math.min(cap, connectors.length)));
+    // Helper: pick up to n unique prompts from arr, preferring ones NOT in history
+    const takeUnique = (arr, n)=>{
+      const out = [];
+      // 1) prefer not-in-history
+      for(const p of arr){
+        if(out.length>=n) break;
+        const k = keyOf(p);
+        if(histSet.has(k)) continue;
+        out.push(p);
+      }
+      // 2) fill from history if needed
+      for(const p of arr){
+        if(out.length>=n) break;
+        const k = keyOf(p);
+        if(out.some(x=>keyOf(x)===k)) continue;
+        out.push(p);
+      }
+      return out;
+    };
+
+    let out = [];
+    out = out.concat(takeUnique(connectors, Math.min(cap, connectors.length)));
     const remaining = PROMPTS_PER_ROUND - out.length;
-    out.push(...others.slice(0, Math.min(remaining, others.length)));
+    out = out.concat(takeUnique(others, Math.min(remaining, others.length)));
 
-    // Strict connector cap: if we don't have enough non-connector prompts,
-    // we prefer re-using "others" rather than flooding the round with connectors.
-    const usedConn = out.filter(isConnectorPrompt).length;
-    while(out.length < PROMPTS_PER_ROUND && others.length){
-      out.push(others[out.length % others.length]);
-    }
-    // Last resort only (extremely connector-heavy pool): allow additional connectors.
-    while(out.length < PROMPTS_PER_ROUND && connectors.length){
-      out.push(connectors[out.length % connectors.length]);
+    // If still short (small banks), cycle without creating adjacent duplicates
+    const source = others.length ? others : connectors;
+    while(out.length < PROMPTS_PER_ROUND && source.length){
+      const cand = source[out.length % source.length];
+      const last = out[out.length-1];
+      if(!last || keyOf(last)!==keyOf(cand)){
+        if(!out.some(x=>keyOf(x)===keyOf(cand)) || pool.length < PROMPTS_PER_ROUND){
+          out.push(cand);
+        }else{
+          // pick a different one
+          const alt = source.find(p=> keyOf(p)!==keyOf(last) && !out.some(x=>keyOf(x)===keyOf(p))) || cand;
+          out.push(alt);
+        }
+      }else{
+        const alt = source.find(p=> keyOf(p)!==keyOf(last)) || cand;
+        out.push(alt);
+      }
     }
 
-    // Safety: never exceed cap unless we truly have no other content.
+    // Enforce strict connector cap when we have any non-connector content
     if(others.length){
       const capped = [];
       let c=0;
@@ -1034,9 +1147,28 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
         }
         if(capped.length===PROMPTS_PER_ROUND) break;
       }
-      return shuffle(capped).slice(0, PROMPTS_PER_ROUND);
+      out = capped;
     }
-    return shuffle(out).slice(0, PROMPTS_PER_ROUND);
+
+    // Final shuffle but avoid immediate duplicates (can happen in tiny pools)
+    out = shuffle(out);
+    for(let i=1;i<out.length;i++){
+      if(keyOf(out[i])===keyOf(out[i-1])){
+        let j=i+1;
+        while(j<out.length && keyOf(out[j])===keyOf(out[i-1])) j++;
+        if(j<out.length){
+          const tmp=out[i]; out[i]=out[j]; out[j]=tmp;
+        }
+      }
+    }
+    out = out.slice(0, PROMPTS_PER_ROUND);
+
+    // Update history (keep last 30 per theme)
+    const keys = out.map(keyOf).filter(Boolean);
+    hist.push(...keys);
+    while(hist.length > 30) hist.shift();
+
+    return out;
   }
 
   function startRound(){
@@ -1129,13 +1261,61 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   // Marking helpers
   function computeScoreSec(timeMs, wrong){ return (timeMs/1000) + wrong*PENALTY_SEC; }
-  function levelRubric(level){ const lvl=Number(level)||1; const minWords=Math.min(16, 3 + Math.floor(lvl/2)); const minChars=Math.min(220, 14 + lvl*6); const requireConnector=lvl>=4; const requireBe=lvl>=2; return {minWords,minChars,requireConnector,requireBe}; }
+  function levelRubric(level){
+  const lvl = Math.max(1, Math.min(10, Number(level)||1));
+  // Gentle ramp: Level 1 is very doable; Level 10 demands a proper JC-style paragraph.
+  const minWords = Math.min(18, 3 + lvl);      // L1:4 … L10:13
+  const minChars = Math.min(260, 20 + lvl*12); // L1:32 … L10:140
+  const requireConnector = lvl >= 6;           // keep connectors from dominating early levels
+  const requireBe = lvl >= 2;
+  return {minWords, minChars, requireConnector, requireBe};
+}; }
   const ES_FIX = {"espanol":"español","tambien":"también","facil":"fácil","dificil":"difícil","futbol":"fútbol","musica":"música","también":"también"};
   function tidySuggestion(raw){ let s=String(raw||"").trim(); if(!s) return ""; s=s.replace(/\s+/g," ").trim(); s=s.charAt(0).toUpperCase()+s.slice(1); if(state.lang==="es"){ s=s.split(/(\b)/).map(tok=>{ const low=tok.toLowerCase(); return ES_FIX[low] ? ES_FIX[low] : tok; }).join(""); s=s.replace(/\bde\s+español\b/i, "de español"); } if(!/[.!?]$/.test(s)) s += "."; return s; }
   function countWords(s){ return String(s||"").trim().split(/\s+/).filter(Boolean).length; }
   function connectorPresent(s){ const x=norm(s); return /(\by\b|\bpero\b|\bporque\b|\bademas\b|\bentonces\b|\btambien\b|\bya\s+que\b)/.test(x) || /(\bet\b|\bmais\b|\bparce\s+que\b|\bdonc\b)/.test(x) || /(\bund\b|\baber\b|\bweil\b|\bdeshalb\b)/.test(x); }
   function beVerbPresent(s){ const x=norm(s); if(state.lang==="es") return /(\bes\b|\bson\b|\bestoy\b|\bestá\b|\bsoy\b)/.test(x); if(state.lang==="fr") return /(\bc\s*est\b|\best\b|\bsont\b|\bsuis\b|\bai\b|\bas\b|\ba\b|\bont\b)/.test(x); if(state.lang==="de") return /(\bist\b|\bsind\b|\bbin\b|\bseid\b|\bhabe\b|\bhat\b|\bhaben\b)/.test(x); return false; }
-  function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10) return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
+  function pickModelAnswer(p, given){
+  const promptText = (p && p.text) ? String(p.text) : "";
+  const text = promptText.toLowerCase();
+  const gRaw = String(given||"").trim();
+  const g = gRaw.replace(/^[-–—]+\s*/,"").trim();
+  const gWords = countWords(g);
+  // Only reuse the student text as a "model" if it is already a decent complete sentence.
+  // This avoids surreal outputs like "—. Y tengo un armario." becoming the coach model.
+  if(g && gWords >= 6 && !/^(y|pero|porque|adem[aá]s|entonces)\b/i.test(g) && !/[—–-]{2,}/.test(g)){
+    const t = tidySuggestion(g);
+    if(t && t.length >= 12) return t;
+  }
+  if(state.lang==="es"){
+    if(text.includes("person you admire")) return "Admiro a mi madre porque es trabajadora y muy generosa.";
+    if(text.includes("best friend")) return "Mi mejor amigo es divertido, muy amable y siempre me ayuda.";
+    if(text.includes("teacher")) return "El profesor es simpático y explica muy bien en clase.";
+    if(text.includes("classroom")) return "Mi clase es grande, luminosa y tiene muchas ventanas.";
+    if(text.includes("school")) return "Mi colegio es moderno, está en el centro y me gusta mucho.";
+    if(text.includes("bedroom")) return "Mi habitación es cómoda, ordenada y tiene un escritorio.";
+    if(text.includes("routine")) return "Normalmente me levanto temprano y voy al colegio en autobús.";
+    if(text.includes("weekend")) return "El fin de semana juego al fútbol y salgo con mis amigos.";
+    return "Es interesante y, además, me gusta mucho porque es útil.";
+  }
+  if(state.lang==="fr"){
+    if(text.includes("best friend")) return "Mon meilleur ami est drôle, très gentil et il m’aide toujours.";
+    if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien en classe.";
+    if(text.includes("classroom")) return "Ma salle de classe est grande, lumineuse et très agréable.";
+    if(text.includes("school")) return "Mon école est moderne, elle est au centre et je l’aime beaucoup.";
+    if(text.includes("bedroom")) return "Ma chambre est confortable, bien rangée et j’ai un bureau.";
+    return "C’est intéressant et, en plus, j’aime beaucoup parce que c’est utile.";
+  }
+  if(state.lang==="de"){
+    if(text.includes("best friend")) return "Mein bester Freund ist lustig, sehr freundlich und hilft mir immer.";
+    if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt in der Klasse sehr gut.";
+    if(text.includes("classroom")) return "Mein Klassenzimmer ist groß, hell und sehr angenehm.";
+    if(text.includes("school")) return "Meine Schule ist modern, liegt im Zentrum und ich mag sie sehr.";
+    if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich, ordentlich und ich habe einen Schreibtisch.";
+    return "Es ist interessant und ich mag es sehr, weil es nützlich ist.";
+  }
+  return tidySuggestion(g)||"";
+} if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
 
 
@@ -1309,6 +1489,9 @@ function diffMarkup(answer, model, ok){
   try{
     if(state.showCorrections && el.feedbackList){
       el.feedbackList.scrollIntoView({behavior:"smooth", block:"start"});
+      el.feedbackList.classList.add("flashCue");
+      toast("Coach feedback below — review your fixes.");
+      setTimeout(()=>{ try{ el.feedbackList.classList.remove("flashCue"); }catch(_){ } }, 1600);
     }
   }catch(_){ }
 
@@ -1434,7 +1617,7 @@ function renderResults(){
     if(el.timeOut) el.timeOut.textContent = fmtTime(state.elapsedMs);
     if(el.wrongOut) el.wrongOut.textContent = String(m.wrong);
     if(el.scoreOut) el.scoreOut.textContent = `${m.scoreSec.toFixed(1)}s`;
-    if(el.targetOut) el.targetOut.textContent = `${unlockTargetForLevel(state.level)}s + ≤2 wrong`;
+    if(el.targetOut) el.targetOut.textContent = `${unlockTargetForLevel(state.level)}s + ≤${allowedWrong(state.level)} wrong`;
 
     if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
 
@@ -1496,8 +1679,23 @@ m.items.forEach(it=>{
     const t = state.workshop.gate.target;
     const left = Math.max(0, t - state.workshop.stats.streak);
     const unlocked = left===0;
-    el.wsExit.textContent = unlocked ? "Exit Gym ✓" : `Exit Gym 🔒 (need ${left} more)`;
-    el.wsExit.disabled = !unlocked;
+
+    // Visual reward when cleared
+    el.wsExit.classList.toggle("btnWin", unlocked);
+
+    if(unlocked){
+      if(state.workshop.required && !(state.mark && state.mark.passed)){
+        el.wsExit.textContent = "Try Level Again ➜";
+      }else if(state.mark && state.mark.passed && state.level < 10){
+        el.wsExit.textContent = "Next Level ➜";
+      }else{
+        el.wsExit.textContent = "Back to Results ✓";
+      }
+      el.wsExit.disabled = false;
+    }else{
+      el.wsExit.textContent = `Exit Gym 🔒 (need ${left} more)`;
+      el.wsExit.disabled = true;
+    }
   }
 
   
@@ -1530,18 +1728,46 @@ function openGymFromResults(){
   // If the student's answer is a fragment (e.g. "Antes era"), we still keep it,
   // but we ALWAYS show the full prompt + Coach model so the drill makes sense.
   const items = (state.mark.items||[]).slice();
-  const hasText = (it)=> String(it.answer||"").trim().length>0;
-  const byTag = items.find(it=> (it.tags||[]).includes(focusTag) && hasText(it));
-  const firstWrong = items.find(it=> !it.ok && hasText(it));
-  const any = items.find(it=> hasText(it));
+  const isMeaningful = (s)=>{
+    const t = String(s||"").trim();
+    if(!t) return false;
+    if(/^[-–—]+$/.test(t)) return false;
+    return true;
+  };
+  const hasUseful = (it)=> isMeaningful(it.answer) || isMeaningful(it.suggestion) || isMeaningful(it.prompt);
+
+  // Build a pool of concrete examples (prefer wrong ones with real text + a prompt)
+  const poolItems = items.filter(it=> !it.ok && isMeaningful(it.prompt) && (isMeaningful(it.answer) || isMeaningful(it.suggestion)));
+  const poolAny   = items.filter(it=> isMeaningful(it.prompt) && (isMeaningful(it.answer) || isMeaningful(it.suggestion)));
+
+  const byTag = poolItems.find(it=> (it.tags||[]).includes(focusTag));
+  const firstWrong = poolItems[0];
+  const any = poolAny[0];
   const refItem = byTag || firstWrong || any || {n:0, prompt:"", answer:"", suggestion:""};
+
+  // Keep the pool so Gym drills can rotate examples (reduces repetition)
+  state.workshop.poolItems = poolItems.length ? poolItems : poolAny;
+  state.workshop.recentRefKeys = [];
+
 
   state.workshop.required = state.gymRequired;
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
   state.workshop.refItem = refItem;
-  state.workshop.refText = (countWords(refItem.answer) >= 3 ? String(refItem.answer||"") : String(refItem.suggestion||refItem.answer||""));
+  const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
+  const ans0 = cleanDash(refItem.answer);
+  const sug0 = cleanDash(refItem.suggestion);
+  const pr0  = cleanDash(refItem.prompt);
+  // Seed text for drills: prefer the student answer if it is meaningful; otherwise use a sensible coach model.
+  let seed = "";
+  if(isMeaningful(ans0) && countWords(ans0) >= 3) seed = ans0;
+  if(!seed){
+    const model = pickModelAnswer({text: pr0||""}, sug0||"");
+    if(isMeaningful(model)) seed = model;
+  }
+  if(!seed && isMeaningful(pr0)) seed = pr0;
+  state.workshop.refText = seed;
   state.workshop.recentSubs = [];
   state.workshop.stats = {correct:0, attempts:0, streak:0};
   state.workshop.gate = { type:"streak", target: gymTarget(state.level, state.mark.wrong) };
@@ -1569,13 +1795,22 @@ function openGymFromResults(){
 function renderGymContext(){
   if(!el.wsContext) return;
   const it = state.workshop.refItem || {};
-  const prompt = String(it.prompt||"").trim();
-  const ans = String(it.answer||"").trim();
-  const model = String(it.suggestion||"").trim();
+  const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
+  const prompt = cleanDash(it.prompt);
+  let ans = cleanDash(it.answer);
+  let model = cleanDash(it.suggestion);
+
+  // Avoid surreal dashes / empty models — always provide a sensible coach model
+  if(!model || /^[-–—]+$/.test(model)){
+    model = pickModelAnswer({text: prompt||""}, ans||"");
+  }
+
+  // Display-friendly empty answer
+  const displayAns = ans ? ans : "— (no answer)";
   if(!prompt && !ans && !model){ el.wsContext.classList.add("hidden"); el.wsContext.innerHTML=""; return; }
 
   const frag = ans && countWords(ans) < 3;
-  const dm = diffMarkup(ans||"—", model||"—", !!it.ok);
+  const dm = diffMarkup(displayAns, model||"—", !!it.ok);
   el.wsContext.classList.remove("hidden");
   el.wsContext.innerHTML = `
     <div class="wsCtxRow"><div class="wsCtxK">Prompt</div><div class="wsCtxV">${escapeHtml(prompt||"—")}</div></div>
@@ -1591,14 +1826,50 @@ function renderGymContext(){
     else { state.workshop.stats.streak = 0; }
     if(el.wsFeedback) el.wsFeedback.textContent = msg;
     updateGymMeter(); updateGymExit();
-    if(state.workshop.stats.streak >= state.workshop.gate.target){ state.workshop.cleared=true; toast("Gym cleared ✓"); }
-    else setTimeout(()=> nextGymDrill(), 450);
+    if(state.workshop.stats.streak >= state.workshop.gate.target){
+      state.workshop.cleared = true;
+      toast("Gym cleared ✓");
+      if(el.wsSubtitle){
+        el.wsSubtitle.textContent = state.workshop.required
+          ? "Gym cleared. Now go back, replay the level, and pass."
+          : "Gym cleared. Good. Back to results whenever you like.";
+      }
+      // little reward pulse
+      if(el.screens && el.screens.gym) el.screens.gym.classList.add("gymCleared");
+      setTimeout(()=>{ if(el.screens && el.screens.gym) el.screens.gym.classList.remove("gymCleared"); }, 900);
+    } else setTimeout(()=> nextGymDrill(), 450);
   }
 
   function nextGymDrill(){
     const type = gymFocusType();
     let variant = Math.random() < 0.55 ? "choice" : "type";
     if(!state.workshop.recentSubs) state.workshop.recentSubs = [];
+
+    // Rotate the concrete example used in Gym so drills don't feel like the same line forever.
+    // Prefer wrong answers with real text; avoid placeholders like "—".
+    try{
+      const pool = state.workshop.poolItems || [];
+      if(pool.length > 1){
+        const keyOf = (it)=> norm(String(it.prompt||"") + "|" + String(it.answer||"") + "|" + String(it.suggestion||""));
+        const recent = state.workshop.recentRefKeys || [];
+        const pick = pool.find(it=> !recent.includes(keyOf(it))) || pool[0];
+        state.workshop.refItem = pick;
+        // maintain small recent list
+        recent.push(keyOf(pick));
+        while(recent.length > 4) recent.shift();
+        state.workshop.recentRefKeys = recent;
+
+        // refresh seed text for detail drills
+        const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
+        const ans0 = cleanDash(pick.answer);
+        const sug0 = cleanDash(pick.suggestion);
+        const pr0  = cleanDash(pick.prompt);
+        let seed = (countWords(ans0) >= 3) ? ans0 : (sug0 ? sug0 : ans0);
+        if(!seed) seed = pr0;
+        state.workshop.refText = seed;
+      }
+    }catch(_e){}
+    renderGymContext();
 
     // Choose a sub-drill to avoid heavy repetition.
     let sub = type;
@@ -2068,8 +2339,26 @@ if(el.rewardOk){
     if(el.homeBtn) el.homeBtn.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
     if(el.wsBackResults) el.wsBackResults.addEventListener("click", ()=> show("results"));
     if(el.wsHome) el.wsHome.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
-    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{ if(el.wsExit.disabled) return; show("home"); renderThemeTiles(); });
-    if(el.wsSubmit) el.wsSubmit.addEventListener("click", handleGymSubmit);
+    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{
+  if(el.wsExit.disabled) return;
+  // Reward routing:
+  // - If Gym was required (failed round), send them back to Results with Try Again ready.
+  // - If the round was already passed, allow a clean "Next Level" jump.
+  if(state.workshop.required && !(state.mark && state.mark.passed)){
+    show("results");
+    try{ el.playAgainBtn && el.playAgainBtn.focus(); }catch(_){ }
+    toast("Gym cleared — now replay the level to unlock it.");
+    return;
+  }
+  if(state.mark && state.mark.passed && state.level < 10){
+    state.level = Math.min(10, Number(state.level)+1);
+    updatePills();
+    startRound();
+    return;
+  }
+  show("results");
+});
+if(el.wsSubmit) el.wsSubmit.addEventListener("click", handleGymSubmit);
     if(el.wsInput) el.wsInput.addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); handleGymSubmit(); } });
     if(el.wsOverride) el.wsOverride.addEventListener("click", ()=>{ if(el.wsExit){ el.wsExit.disabled=false; el.wsExit.textContent="Exit Gym ✓"; } toast("Teacher override used"); });
   }
