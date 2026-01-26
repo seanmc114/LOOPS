@@ -425,6 +425,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function modelFromPromptES(p, level){
     const s = String(p||"").toLowerCase();
+    if(/telephone|tel[ée]fono|teléfono|movil|móvil|mobile|cell(phone)?|smartphone/.test(s)) return "Mi teléfono es moderno y lo uso para hablar con mis amigos y escuchar música.";
     if(/town|pueblo|ciudad|barrio/.test(s)) return "Vivo en un pueblo pequeño y hay un parque donde quedo con mis amigos.";
     if(/school|colegio|instituto|escuela/.test(s)) return "Mi colegio es grande y tiene un patio donde jugamos al fútbol.";
     if(/classroom|clase/.test(s)) return "Mi clase es luminosa y hay pósters en las paredes.";
@@ -433,12 +434,19 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     if(/bedroom|habitaci/.test(s)) return "Mi habitación es pequeña pero cómoda y tengo un escritorio para estudiar.";
     if(/person.*admire|admire|admiro/.test(s)) return "Admiro a mi madre porque es trabajadora y siempre me ayuda.";
     if(/house|home|casa/.test(s)) return "Mi casa es bastante moderna y tiene una cocina grande.";
-    return "Es un lugar interesante y me gusta bastante.";
+    return "Es interesante y me gusta bastante.";
   }
 
   function pickDetailAddonES(p){
     const s = String(p||"").toLowerCase();
     const pick = (arr)=> arr[Math.floor(Math.random()*arr.length)];
+    if(/telephone|tel[ée]fono|teléfono|movil|móvil|mobile|cell(phone)?|smartphone/.test(s)) return pick([
+      "es negro y bastante rápido",
+      "tengo muchas aplicaciones útiles",
+      "lo uso para hablar y mandar mensajes",
+      "me encanta escuchar música con él",
+      "hago fotos y vídeos"
+    ]);
     if(/town|pueblo|ciudad|barrio/.test(s)) return pick([
       "hay un cine y un centro comercial",
       "se puede ir de compras",
@@ -1149,10 +1157,12 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     state.idx = 0;
     state.answers = Array(PROMPTS_PER_ROUND).fill("");
     state.locked = Array(PROMPTS_PER_ROUND).fill(false);
+    state.lockedAnswers = Array(PROMPTS_PER_ROUND).fill("");
     state.maxIdxReached = 1;
     state.startedAt = Date.now();
     state.isMarking = false;
     state.roundFinished = false;
+    state._coachPopupShown = false;
     state.elapsedMs = 0;
     clearInterval(state.timer);
     state.timer = setInterval(()=>{ state.elapsedMs = Date.now()-state.startedAt; updateGameHeader(); }, 400);
@@ -1231,7 +1241,7 @@ function buildPromptUI(){
     el.promptArea.appendChild(wrap);
 
     const input = wrap.querySelector("#mainInput");
-    input.value = state.answers[state.idx] || "";
+    input.value = (isIdxLocked(state.idx) ? (state.lockedAnswers?.[state.idx] || state.answers[state.idx] || "") : (state.answers[state.idx] || ""));
 
     const isLocked = isIdxLocked(state.idx);
     if(isLocked){
@@ -1257,6 +1267,8 @@ function buildPromptUI(){
       if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
     }
     state.locked[state.idx] = true;
+    if(String(state.answers[state.idx]||'').trim()) state.lockedAnswers[state.idx] = state.answers[state.idx];
+    if(String(state.answers[state.idx]||'').trim()) state.lockedAnswers[state.idx] = state.answers[state.idx];
     state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
     state.idx--;
     buildPromptUI();
@@ -1335,7 +1347,10 @@ function scaffoldForPrompt(text, level, lang){
       out = ["where it is", "2 rooms / objects", "opinion", "1 extra detail"].concat(base);
     } else if(t.includes("routine") || t.includes("weekday") || t.includes("daily") || t.includes("día") || t.includes("horario")){
       out = ["time phrase", "3 verbs", "1 connector", "opinion"].concat(base);
-    } else {
+    
+    } else if(t.includes("phone") || t.includes("telephone") || t.includes("teléfono") || t.includes("telefono") || t.includes("móvil") || t.includes("movil") || t.includes("mobile")){
+      out = ["what it looks like (colour/size)", "what you use it for", "opinion", "how often"].concat(base);
+} else {
       out = base;
     }
 
@@ -1362,7 +1377,7 @@ function scaffoldForPrompt(text, level, lang){
 
   async function markWithAI(payload){
     if(typeof window.aiCorrect !== "function") throw new Error("aiCorrect not found");
-    const timeoutMs = 12000;
+    const timeoutMs = 6000;
     return await Promise.race([
       window.aiCorrect(payload),
       new Promise((_,rej)=> setTimeout(()=> rej(new Error("AI timeout")), timeoutMs))
@@ -1393,17 +1408,38 @@ function scaffoldForPrompt(text, level, lang){
       answers: state.answers,
     };
 
-    let aiResp=null;
-    try{ aiResp = await markWithAI(payload); state.ai.ok=true; state.ai.error=""; }
-    catch(e){ state.ai.ok=false; state.ai.error=String(e&&e.message?e.message:e); }
-
+    // Local-first: build results immediately (no waiting). Then enrich with AI if it returns.
     const aiItems = [];
-    if(aiResp){
-      const list = aiResp.items || aiResp.results || aiResp.answers || aiResp.data;
+    const aiPromise = markWithAI(payload).then(aiResp=>{
+      state.ai.ok = true; state.ai.error = "";
+      const list = aiResp && (aiResp.items || aiResp.results || aiResp.answers || aiResp.data);
       if(Array.isArray(list)) list.forEach((it,i)=> aiItems[i]=it||null);
-    }
+      // Enrich existing items in-place when possible
+      if(state.mark && Array.isArray(state.mark.items)){
+        state.mark.items = state.mark.items.map((it, i)=>{
+          const ai = aiItems[i] || {};
+          const aiCorrection = ai.correction || ai.correct || ai.model || ai.example_answer || ai.exemplar || ai.rewrite || ai.ideal || ai.suggested || "";
+          const aiTip = ai.tip || ai.next_tip || ai.advice || ai.hint || "";
+          const aiWhy = ai.reason || ai.rationale || ai.notes || "";
+          const betterSuggestion = (aiCorrection && String(aiCorrection).trim()) ? String(aiCorrection).trim() : it.suggestion;
+          const betterTip = (aiTip && String(aiTip).trim()) ? String(aiTip).trim() : it.tip;
+          const betterWhy = (aiWhy && String(aiWhy).trim()) ? String(aiWhy).trim() : it.why;
+          return {...it, suggestion: betterSuggestion, tip: betterTip, why: betterWhy};
+        });
+        // If the user is still on the results screen, refresh the feedback UI.
+        if(screens && screens.results && !screens.results.classList.contains('hidden')){
+          renderResults();
+        }
+      }
+      if(el.aiStatusText) el.aiStatusText.textContent = "Coach upgraded your feedback ✓";
+    }).catch(e=>{
+      state.ai.ok = false;
+      state.ai.error = String(e && e.message ? e.message : e);
+      if(el.aiStatusText) el.aiStatusText.textContent = "Coach was slow/offline — using local marking.";
+    });
 
     const items=[];
+
     const reasonsCount={};
     let wrong=0;
 
@@ -1619,6 +1655,45 @@ function scaffoldForPrompt(text, level, lang){
   }
 }
 
+
+
+  // Quick coach popup (non-blocking). Shows the same verdict as the Results screen.
+  function showCoachPopup(){
+    try{
+      // Build once per round
+      if(state._coachPopupShown) return;
+      state._coachPopupShown = true;
+      const focus = state.mark ? (state.mark.focusLabel || state.mark.focus || '') : '';
+      const name = (getPlayerName && getPlayerName()) ? getPlayerName() : "player";
+      const msg = (state.lang==='es')
+        ? `Listen, ${name}. Hoy: ${focus || 'precisión'}. Tú puedes.`
+        : `Listen, ${name}. Today: ${focus || 'precision'}. You can do this.`;
+
+      const modal = document.createElement('div');
+      modal.className = 'coachModal';
+      modal.innerHTML = `
+        <div class="coachModalInner" role="dialog" aria-modal="true">
+          <div class="coachModalTop">
+            <div class="coachAvatar" aria-hidden="true">⚽</div>
+            <div>
+              <div class="coachTitle">EL MISTER</div>
+              <div class="coachLine">${escapeHtml(msg)}</div>
+            </div>
+          </div>
+          <div class="coachModalBtns">
+            <button class="btn primary" type="button" id="coachGoFeedback">Review mistakes</button>
+            <button class="btn" type="button" id="coachGoGym">Gym</button>
+            <button class="btn ghost" type="button" id="coachClose">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      const close = ()=>{ modal.remove(); };
+      modal.addEventListener('click', (e)=>{ if(e.target===modal) close(); });
+      modal.querySelector('#coachClose').addEventListener('click', close);
+      modal.querySelector('#coachGoFeedback').addEventListener('click', ()=>{ close(); state.showCorrections=true; renderResults(); const fl=document.getElementById('feedbackList'); if(fl) fl.scrollIntoView({behavior:'smooth', block:'start'}); });
+      modal.querySelector('#coachGoGym').addEventListener('click', ()=>{ close(); openGymFromResults(); });
+    }catch(e){}
+  }
 function renderResults(){
     updatePills();
     const m=state.mark;
@@ -1788,6 +1863,27 @@ function buildGymPool(){
       pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"", tags:["detail"], _idx:j, _key:(pr+"|—").slice(0,220)});
     }
   }
+  // Ensure at least 3 distinct prompt texts so streak drills can vary even if answers were blank.
+  try{
+    const distinct = set(list=>{
+      const s=new Set();
+      for(const x of list){ const k=String(x.prompt||'').trim().toLowerCase(); if(k) s.add(k); }
+      return s;
+    });
+    let dp = distinct(pool);
+    if(dp.size < 3 && Array.isArray(state.prompts)){
+      const existing = dp;
+      for(let j=0;j<state.prompts.length && dp.size<3;j++){
+        const pr = state.prompts[j] && state.prompts[j].text ? String(state.prompts[j].text).trim() : '';
+        const k = pr.toLowerCase();
+        if(!pr || existing.has(k)) continue;
+        existing.add(k);
+        pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"", tags:["detail"], _idx:j, _key:(pr+"|—").slice(0,220)});
+        dp = existing;
+      }
+    }
+  }catch(e){}
+
   return pool;
 }
 
