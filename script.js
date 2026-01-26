@@ -11,19 +11,6 @@
 (function(){
   "use strict";
 
-  // ---- Safe storage (prevents blank screens if localStorage is blocked) ----
-  const __memStore = Object.create(null);
-  function lsGet(key){
-    try{ return lsGet(key); }
-    catch(e){
-      return Object.prototype.hasOwnProperty.call(__memStore, key) ? __memStore[key] : null;
-    }
-  }
-  function lsSet(key, val){
-    try{ lsSet(key, val); }
-    catch(e){ __memStore[key] = String(val); }
-  }
-
   const PROMPTS_PER_ROUND = 10;
   const PENALTY_SEC = 30;
 
@@ -34,28 +21,6 @@ const COACH = {
   // A loose, football‑manager caricature: stern, funny, obsessed with standards.
   name: "Coach El Mister",
   avatar: "🧥⚽",
-  // Simple original SVG (inspired by a touchline manager vibe, not a real person).
-  avatarHtml: `
-    <svg viewBox="0 0 96 96" width="56" height="56" aria-hidden="true">
-      <defs>
-        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="rgba(0,0,0,.9)"/>
-          <stop offset="1" stop-color="rgba(0,0,0,.6)"/>
-        </linearGradient>
-      </defs>
-      <circle cx="48" cy="48" r="44" fill="rgba(0,0,0,.06)" stroke="rgba(0,0,0,.08)"/>
-      <circle cx="48" cy="38" r="16" fill="rgba(0,0,0,.12)"/>
-      <path d="M26 78c4-16 16-22 22-22s18 6 22 22" fill="url(#g)" opacity=".9"/>
-      <path d="M36 58c4 6 20 6 24 0" fill="rgba(255,255,255,.9)" opacity=".35"/>
-      <path d="M30 68c8 4 28 4 36 0" fill="none" stroke="rgba(255,255,255,.65)" stroke-width="3" stroke-linecap="round" opacity=".25"/>
-      <path d="M34 40c3-6 25-6 28 0" fill="none" stroke="rgba(0,0,0,.45)" stroke-width="4" stroke-linecap="round"/>
-      <circle cx="42" cy="36" r="2.4" fill="rgba(0,0,0,.55)"/>
-      <circle cx="54" cy="36" r="2.4" fill="rgba(0,0,0,.55)"/>
-      <path d="M44 44c3 2 5 2 8 0" fill="none" stroke="rgba(0,0,0,.45)" stroke-width="3" stroke-linecap="round"/>
-      <path d="M34 60l-12 8" stroke="rgba(0,0,0,.45)" stroke-width="6" stroke-linecap="round"/>
-      <path d="M62 60l12 8" stroke="rgba(0,0,0,.45)" stroke-width="6" stroke-linecap="round"/>
-    </svg>
-  `,
   praise: [
     "Bien. That’s a proper performance.",
     "Good. You did the work — now keep it.",
@@ -101,17 +66,17 @@ const COACH = {
 
 
 function getPlayerName(){
-  return (lsGet(LS_NAME) || "").trim();
+  return (localStorage.getItem(LS_NAME) || "").trim();
 }
 function setPlayerName(v){
   const name = String(v||"").trim().slice(0,18);
-  lsSet(LS_NAME, name);
+  localStorage.setItem(LS_NAME, name);
   return name;
 }
 
 function loadRewards(){
   try{
-    const raw = lsGet(LS_REWARDS);
+    const raw = localStorage.getItem(LS_REWARDS);
     if(!raw) return {coins:0, loot:{}, last:null};
     const obj = JSON.parse(raw);
     obj.coins = Number(obj.coins)||0;
@@ -119,7 +84,7 @@ function loadRewards(){
     return obj;
   }catch(_){ return {coins:0, loot:{}, last:null}; }
 }
-function saveRewards(r){ lsSet(LS_REWARDS, JSON.stringify(r)); }
+function saveRewards(r){ localStorage.setItem(LS_REWARDS, JSON.stringify(r)); }
 
 const LOOT_POOL = [
   {id:"neon_cog", name:"Neon Cog Sticker"},
@@ -158,22 +123,9 @@ function awardForPass(scoreSec, wrong, targetSec){
 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
-function pickAvoid(options, recent, maxLookback=3){
-  const r = (recent||[]).slice(-maxLookback);
-  const filtered = options.filter(o=>!r.includes(o));
-  return pick(filtered.length ? filtered : options);
-}
-
 function showCoachModal(opts){
   if(!el.coachModal) return;
-  if(el.coachAvatar){
-    // Allow SVG/HTML avatars for a "bigger" coach presence.
-    if(opts.avatarHtml || COACH.avatarHtml){
-      el.coachAvatar.innerHTML = opts.avatarHtml || COACH.avatarHtml;
-    }else{
-      el.coachAvatar.textContent = opts.avatar || COACH.avatar;
-    }
-  }
+  if(el.coachAvatar) el.coachAvatar.textContent = opts.avatar || COACH.avatar;
   if(el.coachTitle) el.coachTitle.textContent = opts.title || COACH.name;
   if(el.coachSub) el.coachSub.textContent = opts.sub || "";
   if(el.coachBody) el.coachBody.innerHTML = opts.html || "";
@@ -399,72 +351,25 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
         return wordFixesES(fixed).fixed;
       }
     }
-    // Detail focus: add ONE extra detail, varied (but CONTEXTUAL — no random armarios in a “person” answer)
+    // Detail focus: add ONE extra detail, varied
     if(focusTag==="too_short" || focusTag==="detail"){
       const starters = ["También", "Además", "Y", "Porque"];
+      const addOns = [
+        "tengo un armario.",
+        "hay una ventana.",
+        "es bastante moderno.",
+        "me gusta mucho.",
+        "es muy cómodo.",
+        "tiene muchos libros.",
+        "hay un patio grande.",
+        "es interesante para mí."
+      ];
       const st = starters[Math.floor(Math.random()*starters.length)];
-
-      const ptxt = String(prompt||"").toLowerCase();
-      // crude topic detection (enough to stop surreal nonsense)
-      const isPerson = /(person|friend|teacher|admire|someone|people|my mum|my dad|mi amigo|mi profesora)/.test(ptxt);
-      const isPlace  = /(house|home|bedroom|room|classroom|school|town|city|colegio|escuela|habitación|casa|clase|pueblo|ciudad)/.test(ptxt);
-      const isRoutine= /(routine|day|weekend|usually|normally|cada|todos los días|por la mañana)/.test(ptxt);
-      const isFood   = /(eat|food|comida|desayuno|almuerzo|cena)/.test(ptxt);
-
-      let addOns;
-      if(isPerson){
-        addOns = [
-          "es muy trabajador.",
-          "es muy amable.",
-          "es divertido y paciente.",
-          "me ayuda mucho.",
-          "porque es una buena persona.",
-          "porque siempre escucha.",
-          "tiene un buen sentido del humor.",
-          "es bastante responsable."
-        ];
-      }else if(isRoutine){
-        addOns = [
-          "normalmente me levanto temprano.",
-          "por la mañana voy al colegio.",
-          "después hago los deberes.",
-          "por la tarde juego al fútbol.",
-          "los fines de semana descanso.",
-          "a veces estudio con mis amigos."
-        ];
-      }else if(isFood){
-        addOns = [
-          "porque es saludable.",
-          "y también bebo agua.",
-          "además me gusta la fruta.",
-          "porque tiene buen sabor.",
-          "pero no me gusta la comida rápida."
-        ];
-      }else if(isPlace){
-        addOns = [
-          "hay una ventana grande.",
-          "es bastante moderno.",
-          "me gusta mucho.",
-          "es muy cómodo.",
-          "tiene muchos libros.",
-          "hay un patio grande.",
-          "es luminoso y ordenado."
-        ];
-      }else{
-        addOns = [
-          "es bastante interesante.",
-          "me gusta mucho.",
-          "porque es divertido.",
-          "y además es muy útil.",
-          "pero a veces es difícil."
-        ];
-      }
-
       const ad = addOns[Math.floor(Math.random()*addOns.length)];
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
       return `${base} ${st} ${ad[0].toLowerCase()+ad.slice(1)}`;
     }
-// Connector focus
+    // Connector focus
     if(focusTag==="no_connector"){
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
       const conns = ["porque","pero","y","además"];
@@ -554,7 +459,6 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     wsMeterFill: $("wsMeterFill"),
     wsMeterText: $("wsMeterText"),
     wsPrompt: $("wsPrompt"),
-    wsContext: $("wsContext"),
     wsChoices: $("wsChoices"),
     wsInputRow: $("wsInputRow"),
     wsInput: $("wsInput"),
@@ -824,7 +728,6 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     mode: "classic",
     lang: "es",
     showCorrections: false,
-    promptHistory: {}, // themeId -> [promptKey,...] recent to reduce repetition
     prompts: [],
     idx: 0,
     answers: [],
@@ -846,7 +749,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function getStars(themeId){
     try{
-      const raw = lsGet(kStars(themeId));
+      const raw = localStorage.getItem(kStars(themeId));
       if(!raw) return Array(10).fill(false);
       const arr = JSON.parse(raw);
       if(!Array.isArray(arr)) return Array(10).fill(false);
@@ -858,20 +761,20 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function setStar(themeId, level, val){
     const arr = getStars(themeId);
     arr[level-1] = !!val;
-    lsSet(kStars(themeId), JSON.stringify(arr));
+    localStorage.setItem(kStars(themeId), JSON.stringify(arr));
   }
   function starsCount(themeId){ return getStars(themeId).filter(Boolean).length; }
   function totalStars(){ return THEMES.reduce((sum,t)=> sum + starsCount(t.id), 0); }
 
   function incRounds(){
-    const v = Number(lsGet(kRounds())||"0")||0;
-    lsSet(kRounds(), String(v+1));
+    const v = Number(localStorage.getItem(kRounds())||"0")||0;
+    localStorage.setItem(kRounds(), String(v+1));
   }
-  function getRounds(){ return Number(lsGet(kRounds())||"0")||0; }
+  function getRounds(){ return Number(localStorage.getItem(kRounds())||"0")||0; }
 
   function loadPB(themeId, level, mode, lang){
     try{
-      const raw = lsGet(kPB(themeId,level,mode,lang));
+      const raw = localStorage.getItem(kPB(themeId,level,mode,lang));
       if(!raw) return null;
       const o = JSON.parse(raw);
       if(!o || typeof o.bestScore !== "number") return null;
@@ -882,7 +785,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const current = loadPB(themeId, level, mode, lang);
     const entry = { bestScore: scoreSec, bestWrong: wrong, bestTimeMs: timeMs, at: Date.now() };
     if(!current || scoreSec < current.bestScore){
-      lsSet(kPB(themeId,level,mode,lang), JSON.stringify(entry));
+      localStorage.setItem(kPB(themeId,level,mode,lang), JSON.stringify(entry));
       return true;
     }
     return false;
@@ -898,20 +801,8 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   }
 
   // -------- Unlock targets --------
-  function unlockTargetForLevel(level){
-  // Time target gets tighter as levels rise (still achievable). Seconds.
-  const lvl = Math.max(1, Math.min(10, Number(level)||1));
-  return Math.max(140, 230 - (lvl * 9));
-}
-function allowedWrong(level){
-  const lvl = Math.max(1, Math.min(10, Number(level)||1));
-  if(lvl <= 2) return 3;
-  if(lvl <= 7) return 2;
-  return 1; // 8–10
-}
-function roundPassesUnlock(wrong, score, level){
-  return (wrong <= allowedWrong(level)) && (score <= unlockTargetForLevel(level));
-}
+  function unlockTargetForLevel(level){ return Math.max(150, 220 - (Number(level)||1) * 7); }
+  function roundPassesUnlock(wrong, score, level){ return (wrong <= 2) && (score <= unlockTargetForLevel(level)); }
 
   // -------- Gym scaling --------
   function gymTarget(level, wrong){
@@ -1051,9 +942,8 @@ function roundPassesUnlock(wrong, score, level){
     const badge = String(p.badge||"").toLowerCase();
     if(badge==="structure" || badge==="connector" || badge==="connectors" || badge==="link") return true;
     const txt = String(p.text||"").toLowerCase();
-    // Common connector cues across languages.
-    // (Use real word-boundaries; some editors accidentally inject control characters.)
-    return /\b(because|so\s+that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in\s+addition|on\s+the\s+other\s+hand)\b/.test(txt);
+    // Common connector cues across languages
+    return /(because|so that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in addition|on the other hand)/.test(txt);
   }
 
   function connectorCapForLevel(level){
@@ -1066,34 +956,8 @@ function roundPassesUnlock(wrong, score, level){
 
   function samplePrompts(themeId){
     const t = THEME_BY_ID[themeId] || THEMES[0];
-    const poolRaw = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
+    const pool = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
     const lvl = Number(state.level)||1;
-
-    const keyOf = (p)=> norm((p && p.text) ? p.text : "");
-    const isMeaningfulPrompt = (p)=>{
-      const k = keyOf(p);
-      if(!k) return false;
-      // treat dash placeholders as empty
-      if(/^[-–—]+$/.test(k)) return false;
-      return true;
-    };
-
-    // De-duplicate the pool by prompt text so a round can't pull the same prompt twice
-    const seenPool = new Set();
-    const pool = [];
-    for(const p of poolRaw){
-      if(!isMeaningfulPrompt(p)) continue;
-      const k = keyOf(p);
-      if(seenPool.has(k)) continue;
-      seenPool.add(k);
-      pool.push(p);
-    }
-
-    // Track recent prompts per theme to reduce repetition across plays
-    if(!state.promptHistory) state.promptHistory = {};
-    if(!state.promptHistory[themeId]) state.promptHistory[themeId] = [];
-    const hist = state.promptHistory[themeId];
-    const histSet = new Set(hist);
 
     // Split connector-ish prompts so early levels don't become "connector-only"
     const connectors = [];
@@ -1103,85 +967,24 @@ function roundPassesUnlock(wrong, score, level){
     }
 
     const cap = connectorCapForLevel(lvl);
+    const out = [];
 
-    // Helper: pick up to n unique prompts from arr, preferring ones NOT in history
-    const takeUnique = (arr, n)=>{
-      const out = [];
-      // 1) prefer not-in-history
-      for(const p of arr){
-        if(out.length>=n) break;
-        const k = keyOf(p);
-        if(histSet.has(k)) continue;
-        out.push(p);
-      }
-      // 2) fill from history if needed
-      for(const p of arr){
-        if(out.length>=n) break;
-        const k = keyOf(p);
-        if(out.some(x=>keyOf(x)===k)) continue;
-        out.push(p);
-      }
-      return out;
-    };
-
-    let out = [];
-    out = out.concat(takeUnique(connectors, Math.min(cap, connectors.length)));
+    // Take up to cap connectors first (if available), then fill with others.
+    out.push(...connectors.slice(0, Math.min(cap, connectors.length)));
     const remaining = PROMPTS_PER_ROUND - out.length;
-    out = out.concat(takeUnique(others, Math.min(remaining, others.length)));
+    out.push(...others.slice(0, Math.min(remaining, others.length)));
 
-    // If still short (small banks), cycle without creating adjacent duplicates
-    const source = others.length ? others : connectors;
-    while(out.length < PROMPTS_PER_ROUND && source.length){
-      const cand = source[out.length % source.length];
-      const last = out[out.length-1];
-      if(!last || keyOf(last)!==keyOf(cand)){
-        if(!out.some(x=>keyOf(x)===keyOf(cand)) || pool.length < PROMPTS_PER_ROUND){
-          out.push(cand);
-        }else{
-          // pick a different one
-          const alt = source.find(p=> keyOf(p)!==keyOf(last) && !out.some(x=>keyOf(x)===keyOf(p))) || cand;
-          out.push(alt);
-        }
-      }else{
-        const alt = source.find(p=> keyOf(p)!==keyOf(last)) || cand;
-        out.push(alt);
-      }
+    // If still short, top up from remaining connectors/others
+    if(out.length < PROMPTS_PER_ROUND){
+      const need = PROMPTS_PER_ROUND - out.length;
+      out.push(...connectors.slice(out.filter(isConnectorPrompt).length, out.filter(isConnectorPrompt).length + need));
+    }
+    if(out.length < PROMPTS_PER_ROUND){
+      const need = PROMPTS_PER_ROUND - out.length;
+      out.push(...others.slice(out.filter(p=>!isConnectorPrompt(p)).length, out.filter(p=>!isConnectorPrompt(p)).length + need));
     }
 
-    // Enforce strict connector cap when we have any non-connector content
-    if(others.length){
-      const capped = [];
-      let c=0;
-      for(const p of shuffle(out)){
-        if(isConnectorPrompt(p)){
-          if(c < cap){ capped.push(p); c++; }
-        }else{
-          capped.push(p);
-        }
-        if(capped.length===PROMPTS_PER_ROUND) break;
-      }
-      out = capped;
-    }
-
-    // Final shuffle but avoid immediate duplicates (can happen in tiny pools)
-    out = shuffle(out);
-    for(let i=1;i<out.length;i++){
-      if(keyOf(out[i])===keyOf(out[i-1])){
-        let j=i+1;
-        while(j<out.length && keyOf(out[j])===keyOf(out[i-1])) j++;
-        if(j<out.length){
-          const tmp=out[i]; out[i]=out[j]; out[j]=tmp;
-        }
-      }
-    }
-    out = out.slice(0, PROMPTS_PER_ROUND);
-
-    // Update history (keep last 30 per theme)
-    const keys = out.map(keyOf).filter(Boolean);
-    hist.push(...keys);
-    while(hist.length > 30) hist.shift();
-
-    return out;
+    return shuffle(out).slice(0, PROMPTS_PER_ROUND);
   }
 
   function startRound(){
@@ -1274,111 +1077,15 @@ function roundPassesUnlock(wrong, score, level){
 
   // Marking helpers
   function computeScoreSec(timeMs, wrong){ return (timeMs/1000) + wrong*PENALTY_SEC; }
-  function levelRubric(level){
-  const lvl = Math.max(1, Math.min(10, Number(level)||1));
-  // Gentle ramp: Level 1 is very doable; Level 10 demands a proper JC-style paragraph.
-  const minWords = Math.min(18, 3 + lvl);      // L1:4 … L10:13
-  const minChars = Math.min(260, 20 + lvl*12); // L1:32 … L10:140
-  const requireConnector = lvl >= 6;           // keep connectors from dominating early levels
-  const requireBe = lvl >= 2;
-  return {minWords, minChars, requireConnector, requireBe};
-}; }
+  function levelRubric(level){ const lvl=Number(level)||1; const minWords=Math.min(16, 3 + Math.floor(lvl/2)); const minChars=Math.min(220, 14 + lvl*6); const requireConnector=lvl>=4; const requireBe=lvl>=2; return {minWords,minChars,requireConnector,requireBe}; }
   const ES_FIX = {"espanol":"español","tambien":"también","facil":"fácil","dificil":"difícil","futbol":"fútbol","musica":"música","también":"también"};
   function tidySuggestion(raw){ let s=String(raw||"").trim(); if(!s) return ""; s=s.replace(/\s+/g," ").trim(); s=s.charAt(0).toUpperCase()+s.slice(1); if(state.lang==="es"){ s=s.split(/(\b)/).map(tok=>{ const low=tok.toLowerCase(); return ES_FIX[low] ? ES_FIX[low] : tok; }).join(""); s=s.replace(/\bde\s+español\b/i, "de español"); } if(!/[.!?]$/.test(s)) s += "."; return s; }
   function countWords(s){ return String(s||"").trim().split(/\s+/).filter(Boolean).length; }
   function connectorPresent(s){ const x=norm(s); return /(\by\b|\bpero\b|\bporque\b|\bademas\b|\bentonces\b|\btambien\b|\bya\s+que\b)/.test(x) || /(\bet\b|\bmais\b|\bparce\s+que\b|\bdonc\b)/.test(x) || /(\bund\b|\baber\b|\bweil\b|\bdeshalb\b)/.test(x); }
   function beVerbPresent(s){ const x=norm(s); if(state.lang==="es") return /(\bes\b|\bson\b|\bestoy\b|\bestá\b|\bsoy\b)/.test(x); if(state.lang==="fr") return /(\bc\s*est\b|\best\b|\bsont\b|\bsuis\b|\bai\b|\bas\b|\ba\b|\bont\b)/.test(x); if(state.lang==="de") return /(\bist\b|\bsind\b|\bbin\b|\bseid\b|\bhabe\b|\bhat\b|\bhaben\b)/.test(x); return false; }
-  function pickModelAnswer(p, given){
-  const promptText = (p && p.text) ? String(p.text) : "";
-  const text = promptText.toLowerCase();
-  const gRaw = String(given||"").trim();
-  const g = gRaw.replace(/^[-–—]+\s*/,"").trim();
-  const gWords = countWords(g);
-  // Only reuse the student text as a "model" if it is already a decent complete sentence.
-  // This avoids surreal outputs like "—. Y tengo un armario." becoming the coach model.
-  if(g && gWords >= 6 && !/^(y|pero|porque|adem[aá]s|entonces)\b/i.test(g) && !/[—–-]{2,}/.test(g)){
-    const t = tidySuggestion(g);
-    if(t && t.length >= 12) return t;
-  }
-  if(state.lang==="es"){
-    if(text.includes("person you admire")) return "Admiro a mi madre porque es trabajadora y muy generosa.";
-    if(text.includes("best friend")) return "Mi mejor amigo es divertido, muy amable y siempre me ayuda.";
-    if(text.includes("teacher")) return "El profesor es simpático y explica muy bien en clase.";
-    if(text.includes("classroom")) return "Mi clase es grande, luminosa y tiene muchas ventanas.";
-    if(text.includes("school")) return "Mi colegio es moderno, está en el centro y me gusta mucho.";
-    if(text.includes("bedroom")) return "Mi habitación es cómoda, ordenada y tiene un escritorio.";
-    if(text.includes("routine")) return "Normalmente me levanto temprano y voy al colegio en autobús.";
-    if(text.includes("weekend")) return "El fin de semana juego al fútbol y salgo con mis amigos.";
-    return "Es interesante y, además, me gusta mucho porque es útil.";
-  }
-  if(state.lang==="fr"){
-    if(text.includes("best friend")) return "Mon meilleur ami est drôle, très gentil et il m’aide toujours.";
-    if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien en classe.";
-    if(text.includes("classroom")) return "Ma salle de classe est grande, lumineuse et très agréable.";
-    if(text.includes("school")) return "Mon école est moderne, elle est au centre et je l’aime beaucoup.";
-    if(text.includes("bedroom")) return "Ma chambre est confortable, bien rangée et j’ai un bureau.";
-    return "C’est intéressant et, en plus, j’aime beaucoup parce que c’est utile.";
-  }
-  if(state.lang==="de"){
-    if(text.includes("best friend")) return "Mein bester Freund ist lustig, sehr freundlich und hilft mir immer.";
-    if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt in der Klasse sehr gut.";
-    if(text.includes("classroom")) return "Mein Klassenzimmer ist groß, hell und sehr angenehm.";
-    if(text.includes("school")) return "Meine Schule ist modern, liegt im Zentrum und ich mag sie sehr.";
-    if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich, ordentlich und ich habe einen Schreibtisch.";
-    return "Es ist interessant und ich mag es sehr, weil es nützlich ist.";
-  }
-  return tidySuggestion(g)||"";
-} if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
+  function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10) return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
 
-
-// --- Diff highlighting (show exactly what changed) ---
-function _tok(s){
-  // Unicode-aware tokeniser: words/numbers OR single non-space chars (punctuation)
-  return String(s||"").match(/[\p{L}\p{N}]+|[^\s]/gu) || [];
-}
-function _isPunc(t){ return /^[\]\[\(\)\{\},.!?:;…]$/.test(t); }
-function _joinTokens(tokens){
-  let out = "";
-  for(let i=0;i<tokens.length;i++){
-    const t = tokens[i];
-    const prev = tokens[i-1];
-    const needSpace = i>0 && !_isPunc(t) && prev && !/^[\(\[\{]$/.test(prev) && !_isPunc(prev);
-    out += (needSpace ? " " : "") + t;
-  }
-  return out;
-}
-function _lcsMask(a,b){
-  const n=a.length, m=b.length;
-  const dp = Array.from({length:n+1}, ()=> new Array(m+1).fill(0));
-  for(let i=1;i<=n;i++){
-    for(let j=1;j<=m;j++){
-      dp[i][j] = (a[i-1]===b[j-1]) ? (dp[i-1][j-1]+1) : Math.max(dp[i-1][j], dp[i][j-1]);
-    }
-  }
-  const keepA = new Array(n).fill(false);
-  const keepB = new Array(m).fill(false);
-  let i=n, j=m;
-  while(i>0 && j>0){
-    if(a[i-1]===b[j-1]){ keepA[i-1]=true; keepB[j-1]=true; i--; j--; }
-    else if(dp[i-1][j] >= dp[i][j-1]) i--;
-    else j--;
-  }
-  return {keepA, keepB};
-}
-function diffMarkup(answer, model, ok){
-  const a = String(answer||"");
-  const b = String(model||"");
-  if(ok || !a || !b) return { answerHtml: escapeHtml(a||"—"), modelHtml: escapeHtml(b||"—") };
-
-  const A=_tok(a), B=_tok(b);
-  const {keepA, keepB} = _lcsMask(A,B);
-
-  const aOut = A.map((t,idx)=> keepA[idx] ? escapeHtml(t) : `<span class="tokBad">${escapeHtml(t)}</span>`);
-  const bOut = B.map((t,idx)=> keepB[idx] ? escapeHtml(t) : `<span class="tokFix">${escapeHtml(t)}</span>`);
-
-  return { answerHtml: _joinTokens(aOut), modelHtml: _joinTokens(bOut) };
-}
   async function markWithAI(payload){
     if(typeof window.aiCorrect !== "function") throw new Error("aiCorrect not found");
     const timeoutMs = 12000;
@@ -1496,17 +1203,9 @@ function diffMarkup(answer, model, ok){
     return {...it, suggestion: sugg, why};
   });
 
-  state.showCorrections = (state.mark && state.mark.wrong>0);
+  state.showCorrections = false;
   renderResults();
   show("results");
-  try{
-    if(state.showCorrections && el.feedbackList){
-      el.feedbackList.scrollIntoView({behavior:"smooth", block:"start"});
-      el.feedbackList.classList.add("flashCue");
-      toast("Coach feedback below — review your fixes.");
-      setTimeout(()=>{ try{ el.feedbackList.classList.remove("flashCue"); }catch(_){ } }, 1600);
-    }
-  }catch(_){ }
 
 
   // Coach intermission (tap to continue)
@@ -1598,7 +1297,7 @@ function diffMarkup(answer, model, ok){
       avatar: COACH.avatar,
       sub,
       html,
-      primaryText: "Gym now (required)",
+      primaryText: "Gym now 🔒",
       secondaryText: "Back to Home",
       onPrimary: ()=>{ openGymFromResults(); },
       onSecondary: ()=>{ show("home"); renderThemeTiles(); }
@@ -1620,24 +1319,16 @@ function diffMarkup(answer, model, ok){
 function renderResults(){
     updatePills();
     const m=state.mark;
-    if(el.aiStatusText){
-      if(state.ai.ok){
-        el.aiStatusText.textContent = (m.wrong>0) ? "Coach verdict — review your fixes below." : "Coach verdict — solid round.";
-      }else{
-        el.aiStatusText.textContent = `Coach offline — local marking used (${state.ai.error}).`;
-      }
-    }
+    if(el.aiStatusText) el.aiStatusText.textContent = state.ai.ok ? "Marked by coach ✓" : `Marked (AI slow/failed — fallback used): ${state.ai.error}`;
     if(el.timeOut) el.timeOut.textContent = fmtTime(state.elapsedMs);
     if(el.wrongOut) el.wrongOut.textContent = String(m.wrong);
     if(el.scoreOut) el.scoreOut.textContent = `${m.scoreSec.toFixed(1)}s`;
-    if(el.targetOut) el.targetOut.textContent = `${unlockTargetForLevel(state.level)}s + ≤${allowedWrong(state.level)} wrong`;
+    if(el.targetOut) el.targetOut.textContent = `${unlockTargetForLevel(state.level)}s + ≤2 wrong`;
 
     if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
 
     if(el.toggleFeedbackBtn){
-      el.toggleFeedbackBtn.textContent = state.showCorrections
-        ? "Hide detailed feedback"
-        : (m.wrong>0 ? "Review mistakes (recommended)" : "Show model answers");
+      el.toggleFeedbackBtn.textContent = state.showCorrections ? "Hide Corrections" : "Show Corrections";
     }
 
     if(el.feedbackList){
@@ -1647,31 +1338,29 @@ function renderResults(){
       }else{
         el.feedbackList.classList.remove("hidden");
         el.feedbackList.innerHTML="";
-        
-m.items.forEach(it=>{
-  const card=document.createElement("div");
-  card.className="fbCard";
-  const dm = diffMarkup(it.answer, it.suggestion||"—", it.ok);
-  card.innerHTML = `
-    <div class="fbTop">
-      <div class="fbNum">${it.n}</div>
-      <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
-      <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
-    </div>
-    <div class="fbBody">
-      <div class="fbBox">
-        <div class="fbLabel">You wrote</div>
-        <div class="fbText">${dm.answerHtml}</div>
-      </div>
-      <div class="fbBox">
-        <div class="fbLabel">Coach improved version</div>
-        <div class="fbText">${dm.modelHtml}</div>
-      </div>
-    </div>
-    <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
-  `;
-  el.feedbackList.appendChild(card);
-});
+        m.items.forEach(it=>{
+          const card=document.createElement("div");
+          card.className="fbCard";
+          card.innerHTML = `
+            <div class="fbTop">
+              <div class="fbNum">${it.n}</div>
+              <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
+              <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
+            </div>
+            <div class="fbBody">
+              <div class="fbBox">
+                <div class="fbLabel">Your answer</div>
+                <div class="fbText">${escapeHtml(it.answer)}</div>
+              </div>
+              <div class="fbBox">
+                <div class="fbLabel">Coach model (what “correct” looks like)</div>
+                <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
+              </div>
+            </div>
+            <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
+          `;
+          el.feedbackList.appendChild(card);
+        });
       }
     }
 
@@ -1692,23 +1381,8 @@ m.items.forEach(it=>{
     const t = state.workshop.gate.target;
     const left = Math.max(0, t - state.workshop.stats.streak);
     const unlocked = left===0;
-
-    // Visual reward when cleared
-    el.wsExit.classList.toggle("btnWin", unlocked);
-
-    if(unlocked){
-      if(state.workshop.required && !(state.mark && state.mark.passed)){
-        el.wsExit.textContent = "Try Level Again ➜";
-      }else if(state.mark && state.mark.passed && state.level < 10){
-        el.wsExit.textContent = "Next Level ➜";
-      }else{
-        el.wsExit.textContent = "Back to Results ✓";
-      }
-      el.wsExit.disabled = false;
-    }else{
-      el.wsExit.textContent = `Exit Gym 🔒 (need ${left} more)`;
-      el.wsExit.disabled = true;
-    }
+    el.wsExit.textContent = unlocked ? "Exit Gym ✓" : `Exit Gym 🔒 (need ${left} more)`;
+    el.wsExit.disabled = !unlocked;
   }
 
   
@@ -1737,51 +1411,17 @@ function openGymFromResults(){
   const focusTag = state.mark.focusTag || "detail";
   const focusLabel = state.mark.focusLabel || "Detail";
 
-  // Pick a concrete example from the just-finished round.
-  // If the student's answer is a fragment (e.g. "Antes era"), we still keep it,
-  // but we ALWAYS show the full prompt + Coach model so the drill makes sense.
-  const items = (state.mark.items||[]).slice();
-  const isMeaningful = (s)=>{
-    const t = String(s||"").trim();
-    if(!t) return false;
-    if(/^[-–—]+$/.test(t)) return false;
-    return true;
-  };
-  const hasUseful = (it)=> isMeaningful(it.answer) || isMeaningful(it.suggestion) || isMeaningful(it.prompt);
-
-  // Build a pool of concrete examples (prefer wrong ones with real text + a prompt)
-  const poolItems = items.filter(it=> !it.ok && isMeaningful(it.prompt) && (isMeaningful(it.answer) || isMeaningful(it.suggestion)));
-  const poolAny   = items.filter(it=> isMeaningful(it.prompt) && (isMeaningful(it.answer) || isMeaningful(it.suggestion)));
-
-  const byTag = poolItems.find(it=> (it.tags||[]).includes(focusTag));
-  const firstWrong = poolItems[0];
-  const any = poolAny[0];
-  const refItem = byTag || firstWrong || any || {n:0, prompt:"", answer:"", suggestion:""};
-
-  // Keep the pool so Gym drills can rotate examples (reduces repetition)
-  state.workshop.poolItems = poolItems.length ? poolItems : poolAny;
-  state.workshop.recentRefKeys = [];
-
+  const refItem =
+       (state.mark.items||[]).find(it=> (it.tags||[]).includes(focusTag) && String(it.answer||"").trim())
+    || (state.mark.items||[]).find(it=>!it.ok && String(it.answer||"").trim())
+    || (state.mark.items||[]).find(it=> String(it.answer||"").trim())
+    || {prompt:"", answer:""};
 
   state.workshop.required = state.gymRequired;
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
   state.workshop.refItem = refItem;
-  const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
-  const ans0 = cleanDash(refItem.answer);
-  const sug0 = cleanDash(refItem.suggestion);
-  const pr0  = cleanDash(refItem.prompt);
-  // Seed text for drills: prefer the student answer if it is meaningful; otherwise use a sensible coach model.
-  let seed = "";
-  if(isMeaningful(ans0) && countWords(ans0) >= 3) seed = ans0;
-  if(!seed){
-    const model = pickModelAnswer({text: pr0||""}, sug0||"");
-    if(isMeaningful(model)) seed = model;
-  }
-  if(!seed && isMeaningful(pr0)) seed = pr0;
-  state.workshop.refText = seed;
-  state.workshop.recentSubs = [];
   state.workshop.stats = {correct:0, attempts:0, streak:0};
   state.workshop.gate = { type:"streak", target: gymTarget(state.level, state.mark.wrong) };
 
@@ -1799,37 +1439,9 @@ function openGymFromResults(){
   }
   if(el.wsGateType) el.wsGateType.textContent = "Streak";
   if(el.wsGateTarget) el.wsGateTarget.textContent = `${state.workshop.gate.target} correct in a row`;
-  renderGymContext();
   updateGymMeter(); updateGymExit();
   nextGymDrill();
   show("gym");
-}
-
-function renderGymContext(){
-  if(!el.wsContext) return;
-  const it = state.workshop.refItem || {};
-  const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
-  const prompt = cleanDash(it.prompt);
-  let ans = cleanDash(it.answer);
-  let model = cleanDash(it.suggestion);
-
-  // Avoid surreal dashes / empty models — always provide a sensible coach model
-  if(!model || /^[-–—]+$/.test(model)){
-    model = pickModelAnswer({text: prompt||""}, ans||"");
-  }
-
-  // Display-friendly empty answer
-  const displayAns = ans ? ans : "— (no answer)";
-  if(!prompt && !ans && !model){ el.wsContext.classList.add("hidden"); el.wsContext.innerHTML=""; return; }
-
-  const frag = ans && countWords(ans) < 3;
-  const dm = diffMarkup(displayAns, model||"—", !!it.ok);
-  el.wsContext.classList.remove("hidden");
-  el.wsContext.innerHTML = `
-    <div class="wsCtxRow"><div class="wsCtxK">Prompt</div><div class="wsCtxV">${escapeHtml(prompt||"—")}</div></div>
-    <div class="wsCtxRow"><div class="wsCtxK">${frag?"You wrote (fragment)":"You wrote"}</div><div class="wsCtxV">${dm.answerHtml}</div></div>
-    <div class="wsCtxRow"><div class="wsCtxK">Coach model</div><div class="wsCtxV">${dm.modelHtml}</div></div>
-  `;
 }
 
 
@@ -1839,72 +1451,13 @@ function renderGymContext(){
     else { state.workshop.stats.streak = 0; }
     if(el.wsFeedback) el.wsFeedback.textContent = msg;
     updateGymMeter(); updateGymExit();
-    if(state.workshop.stats.streak >= state.workshop.gate.target){
-      state.workshop.cleared = true;
-      toast("Gym cleared ✓");
-      if(el.wsSubtitle){
-        el.wsSubtitle.textContent = state.workshop.required
-          ? "Gym cleared. Now go back, replay the level, and pass."
-          : "Gym cleared. Good. Back to results whenever you like.";
-      }
-      // little reward pulse
-      if(el.screens && el.screens.gym) el.screens.gym.classList.add("gymCleared");
-      setTimeout(()=>{ if(el.screens && el.screens.gym) el.screens.gym.classList.remove("gymCleared"); }, 900);
-    } else setTimeout(()=> nextGymDrill(), 450);
+    if(state.workshop.stats.streak >= state.workshop.gate.target){ state.workshop.cleared=true; toast("Gym cleared ✓"); }
+    else setTimeout(()=> nextGymDrill(), 450);
   }
 
   function nextGymDrill(){
     const type = gymFocusType();
-    let variant = Math.random() < 0.55 ? "choice" : "type";
-    if(!state.workshop.recentSubs) state.workshop.recentSubs = [];
-
-    // Rotate the concrete example used in Gym so drills don't feel like the same line forever.
-    // Prefer wrong answers with real text; avoid placeholders like "—".
-    try{
-      const pool = state.workshop.poolItems || [];
-      if(pool.length > 1){
-        const keyOf = (it)=> norm(String(it.prompt||"") + "|" + String(it.answer||"") + "|" + String(it.suggestion||""));
-        const recent = state.workshop.recentRefKeys || [];
-        const pick = pool.find(it=> !recent.includes(keyOf(it))) || pool[0];
-        state.workshop.refItem = pick;
-        // maintain small recent list
-        recent.push(keyOf(pick));
-        while(recent.length > 4) recent.shift();
-        state.workshop.recentRefKeys = recent;
-
-        // refresh seed text for detail drills
-        const cleanDash = (s)=> String(s||"").replace(/^[-–—]+\s*/,"").trim();
-        const ans0 = cleanDash(pick.answer);
-        const sug0 = cleanDash(pick.suggestion);
-        const pr0  = cleanDash(pick.prompt);
-        let seed = (countWords(ans0) >= 3) ? ans0 : (sug0 ? sug0 : ans0);
-        if(!seed) seed = pr0;
-        state.workshop.refText = seed;
-      }
-    }catch(_e){}
-    renderGymContext();
-
-    // Choose a sub-drill to avoid heavy repetition.
-    let sub = type;
-    if(type==="detail"){
-      const base = String(state.workshop.refText||"").trim();
-      const fragment = base && countWords(base) < 3;
-      const opts = fragment
-        ? ["detail_finish", "detail_add"]
-        : ["detail_add", "detail_opinion", "detail_reason", "detail_time", "detail_two"];
-      sub = pickAvoid(opts, state.workshop.recentSubs);
-      if(sub==="detail_finish") variant = "type"; // best as a typed rep
-    }else if(type==="connector"){
-      sub = pickAvoid(["conn_pick", "conn_add", "conn_reason"], state.workshop.recentSubs);
-    }else if(type==="verbs"){
-      sub = pickAvoid(["verb_choice", "verb_type"], state.workshop.recentSubs);
-      if(sub==="verb_choice") variant = "choice";
-      if(sub==="verb_type") variant = "type";
-    }
-    // remember
-    state.workshop.recentSubs.push(sub);
-    if(state.workshop.recentSubs.length > 6) state.workshop.recentSubs.shift();
-    state.workshop.currentSub = sub;
+    const variant = Math.random() < 0.55 ? "choice" : "type";
 
     // Helpers for language-specific tokens
     const L = state.lang;
@@ -2171,47 +1724,26 @@ if(type==="connector"){
                                                             "Schreibe EINEN Satz mit sein.";
       if(el.wsHelp) el.wsHelp.textContent = "Example: El profesor es simpático.";
     } else if(type==="detail"){
-      const ref = state.workshop.refItem || {prompt:"", answer:"", suggestion:""};
-      const baseAns = String(state.workshop.refText||ref.answer||"").trim();
+      const ref = state.workshop.refItem || {prompt:"", answer:""};
+      const baseAns = String(ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
-      const sub = state.workshop.currentSub || "detail_add";
 
-      if(sub==="detail_finish"){
+      if(baseAns){
         if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Finish this fragment into ONE full sentence (8+ words):\n"${String(ref.answer||baseAns||"").trim()}"` :
-          (L==="fr") ? `Termine ce fragment en UNE phrase complète (8+ mots):\n"${String(ref.answer||baseAns||"").trim()}"` :
-                       `Vervollständige dieses Fragment zu EINEM ganzen Satz (8+ Wörter):\n"${String(ref.answer||baseAns||"").trim()}"`;
-        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: a complete sentence (subject + verb + detail)." : "Aim: one complete sentence.";
-      }else if(sub==="detail_reason"){
-        if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Upgrade with opinion + reason (porque):\n"${baseAns||basePrompt||"—"}"` :
-          (L==="fr") ? `Améliore avec opinion + raison (parce que):\n"${baseAns||basePrompt||"—"}"` :
-                       `Verbessere mit Meinung + Grund (weil):\n"${baseAns||basePrompt||"—"}"`;
-        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: include 'porque' + a reason." : "Aim: include a reason connector.";
-      }else if(sub==="detail_time"){
-        if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Upgrade with a time phrase (antes/ahora/normalmente…):\n"${baseAns||basePrompt||"—"}"` :
-          (L==="fr") ? `Ajoute un repère de temps (avant/maintenant/d’habitude…):\n"${baseAns||basePrompt||"—"}"` :
-                       `Füge eine Zeitangabe hinzu (früher/jetzt/normalerweise…):\n"${baseAns||basePrompt||"—"}"`;
-        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: add ONE time phrase + one detail." : "Aim: add a time phrase.";
-      }else if(sub==="detail_two"){
-        if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Add a SECOND detail (también / además…):\n"${baseAns||basePrompt||"—"}"` :
-          (L==="fr") ? `Ajoute un DEUXIÈME détail (aussi / en plus…):\n"${baseAns||basePrompt||"—"}"` :
-                       `Füge EIN zweites Detail hinzu (auch / außerdem…):\n"${baseAns||basePrompt||"—"}"`;
-        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: 2 details, 8+ words." : "Aim: two details.";
+          (L==="es") ? `Upgrade THIS answer (add ONE extra detail):\n"${baseAns}"` :
+          (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):\n"${baseAns}"` :
+                       `Verbessere DIESE Antwort (ein Detail mehr):\n"${baseAns}"`;
       }else{
-        // detail_add (default)
         if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Upgrade THIS answer (add ONE extra detail):\n"${baseAns||basePrompt||"—"}"` :
-          (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):\n"${baseAns||basePrompt||"—"}"` :
-                       `Verbessere DIESE Antwort (ein Detail mehr):\n"${baseAns||basePrompt||"—"}"`;
-        if(el.wsHelp) el.wsHelp.textContent =
-          (L==="es") ? "Aim: ONE extra detail (también / además…) • 6+ words." :
-          (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
-                       "Ziel: EIN Detail mehr • 6+ Wörter.";
+          (L==="es") ? `Write a NEW upgraded answer for:\n"${basePrompt||"the last prompt"}"` :
+          (L==="fr") ? `Écris une NOUVELLE réponse améliorée pour :\n"${basePrompt||"le dernier prompt"}"` :
+                       `Schreibe eine NEUE verbesserte Antwort für:\n"${basePrompt||"die letzte Aufgabe"}"`;
       }
-    } else {
+
+      if(el.wsHelp) el.wsHelp.textContent =
+        (L==="es") ? "Aim: ONE extra detail (también / además…) • 6+ words." :
+        (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
+                     "Ziel: EIN Detail mehr • 6+ Wörter.";} else {
       if(el.wsPrompt) el.wsPrompt.textContent = "Type ONE improved sentence (clean + slightly longer).";
       if(el.wsHelp) el.wsHelp.textContent = "Aim for 8+ words.";
     }
@@ -2288,31 +1820,9 @@ if(type==="connector"){
       msgOk = "Great — correct ‘to be’.";
       msgNo = "Try again: include a correct ‘to be’ form.";
     } else if(type==="detail"){
-      const sub = state.workshop.currentSub || "detail_add";
-      const words = countWords(val);
-      const x = norm(val);
-
-      if(sub==="detail_finish"){
-        ok = words >= 8;
-        msgOk = "Good. Full sentence — now keep that standard.";
-        msgNo = "Not yet: make it a FULL sentence (8+ words).";
-      }else if(sub==="detail_reason"){
-        ok = words >= 10 && connectorPresent(val);
-        msgOk = "Better. Opinion + reason. That’s how you score.";
-        msgNo = "Add a reason connector (porque / parce que / weil) and reach 10+ words.";
-      }else if(sub==="detail_time"){
-        ok = words >= 8 && /(antes|ahora|normalmente|siempre|a\s+veces|hoy|ayer|manana|d['’]?habitude|maintenant|avant|souvent|immer|jetzt|fruher|oft)/.test(x);
-        msgOk = "Nice. Time phrase adds clarity.";
-        msgNo = "Add a time phrase (antes/ahora/normalmente…) and reach 8+ words.";
-      }else if(sub==="detail_two"){
-        ok = words >= 8 && /(tambien|ademas|aussi|en\s+plus|auch|ausserdem)/.test(x);
-        msgOk = "Good. Two details. That’s progress.";
-        msgNo = "Add a SECOND detail (también/además/aussi/auch…) and reach 8+ words.";
-      }else{
-        ok = words >= Math.max(6, Math.min(10, lvlRub.minWords));
-        msgOk = "Nice — more detail added.";
-        msgNo = "Try again: add one more detail (6+ words).";
-      }
+      ok = countWords(val) >= Math.max(6, Math.min(10, lvlRub.minWords));
+      msgOk = "Nice — more detail added.";
+      msgNo = "Try again: add one more detail (6+ words).";
     } else {
       ok = countWords(val) >= Math.max(7, Math.min(12, lvlRub.minWords+1));
       msgOk = "Nice — stronger model.";
@@ -2352,26 +1862,8 @@ if(el.rewardOk){
     if(el.homeBtn) el.homeBtn.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
     if(el.wsBackResults) el.wsBackResults.addEventListener("click", ()=> show("results"));
     if(el.wsHome) el.wsHome.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
-    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{
-  if(el.wsExit.disabled) return;
-  // Reward routing:
-  // - If Gym was required (failed round), send them back to Results with Try Again ready.
-  // - If the round was already passed, allow a clean "Next Level" jump.
-  if(state.workshop.required && !(state.mark && state.mark.passed)){
-    show("results");
-    try{ el.playAgainBtn && el.playAgainBtn.focus(); }catch(_){ }
-    toast("Gym cleared — now replay the level to unlock it.");
-    return;
-  }
-  if(state.mark && state.mark.passed && state.level < 10){
-    state.level = Math.min(10, Number(state.level)+1);
-    updatePills();
-    startRound();
-    return;
-  }
-  show("results");
-});
-if(el.wsSubmit) el.wsSubmit.addEventListener("click", handleGymSubmit);
+    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{ if(el.wsExit.disabled) return; show("home"); renderThemeTiles(); });
+    if(el.wsSubmit) el.wsSubmit.addEventListener("click", handleGymSubmit);
     if(el.wsInput) el.wsInput.addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); handleGymSubmit(); } });
     if(el.wsOverride) el.wsOverride.addEventListener("click", ()=>{ if(el.wsExit){ el.wsExit.disabled=false; el.wsExit.textContent="Exit Gym ✓"; } toast("Teacher override used"); });
   }
