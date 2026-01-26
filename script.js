@@ -36,6 +36,13 @@ const COACH = {
   // A loose, football‑manager caricature: stern, funny, obsessed with standards.
   name: "Coach El Mister",
   avatar: "🧥⚽",
+  avatarHtml: `<svg viewBox="0 0 64 64" width="44" height="44" aria-hidden="true">
+  <path d="M20 26c0-7 5-12 12-12s12 5 12 12-5 14-12 14-12-7-12-14Z" fill="currentColor" opacity=".9"/>
+  <path d="M14 58c2-10 10-16 18-16s16 6 18 16" fill="currentColor" opacity=".85"/>
+  <path d="M24 24c2-4 6-6 8-6s6 2 8 6" fill="currentColor" opacity=".55"/>
+  <path d="M30 44l2 4 2-4" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+  <path d="M23 26c0-6 4-10 9-10 6 0 9 4 9 10" fill="none" stroke="currentColor" stroke-width="3" opacity=".25"/>
+</svg>`,
   praise: [
     "Bien. That’s a proper performance.",
     "Good. You did the work — now keep it.",
@@ -140,7 +147,10 @@ function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
 function showCoachModal(opts){
   if(!el.coachModal) return;
-  if(el.coachAvatar) el.coachAvatar.textContent = opts.avatar || COACH.avatar;
+  if(el.coachAvatar){
+    if(opts.avatarHtml) el.coachAvatar.innerHTML = opts.avatarHtml;
+    else el.coachAvatar.textContent = opts.avatar || COACH.avatar;
+  }
   if(el.coachTitle) el.coachTitle.textContent = opts.title || COACH.name;
   if(el.coachSub) el.coachSub.textContent = opts.sub || "";
   if(el.coachBody) el.coachBody.innerHTML = opts.html || "";
@@ -160,37 +170,51 @@ function showCoachModal(opts){
   }
   el.coachModal.classList.remove("hidden");
 }
+
 function hideCoachModal(){
   if(el.coachModal) el.coachModal.classList.add("hidden");
+}
 
 function presentCoachModal(){
   try{
     const m = state.mark || {};
     const items = Array.isArray(m.items) ? m.items : [];
     const wrongItem = items.find(it=>!it.ok) || items[0] || {};
-    const focusLabel = m.focusLabel || "Detail";
+    const focusLabel = m.focusLabel || "One clean improvement";
     const focusTag = m.focusTag || "detail";
     const top = Array.isArray(m.topTags) ? m.topTags : [];
     const also = top.filter(t=>t && t.label && t.tag && t.tag!==focusTag).slice(0,3).map(t=>t.label);
+
     const passed = !!m.passed;
     const mustGym = !!state.gymRequired;
 
-    const vibe = passed
-      ? "Good. But we polish it. Standards."
-      : "No excuses. We fix the cog and we go again.";
+    const WIN_LINES = [
+      "Good. But we polish it. Standards.",
+      "You won the round. Now win the details.",
+      "Better. Now make it clean."
+    ];
+    const LOSE_LINES = [
+      "Not good enough. Reset. One focus.",
+      "No excuses. Fix the cog and go again.",
+      "We don’t drift. We correct."
+    ];
+
+    const vibe = passed ? pick(WIN_LINES) : pick(LOSE_LINES);
 
     const line2 = mustGym
       ? "Gym is required. Earn the exit. Then you come back sharper."
-      : "You can go Gym for bonus reps, or review feedback and move on.";
+      : "Gym is optional. Review feedback, then decide if you want reps.";
 
-    const focusWhy = (reasonMap[focusTag] || "We fix one thing, properly.");
+    const focusWhy = (reasonMap[focusTag] || "One thing. Fix it properly.");
     const drillLine = (drillMap[focusTag] || "Quick reps. Then back in.");
+
     const prompt = String(wrongItem.prompt||"").trim();
     const ans = String(wrongItem.answer||"").trim();
     const model = buildSuggestionForItem(prompt, ans, state.lang, levelRubric(state.level), focusTag);
 
     const html = `
-      <div style="font-size:15px; font-weight:900; letter-spacing:.2px">${escapeHtml(vibe)}</div>
+      <div style="font-size:16px; font-weight:950; letter-spacing:.2px">EL MISTER</div>
+      <div style="margin-top:6px; font-size:15px; font-weight:900">${escapeHtml(vibe)}</div>
       <div class="muted" style="margin-top:6px">${escapeHtml(line2)}</div>
       <div class="hr" style="margin:12px 0"></div>
       <div><b>Today’s focus:</b> ${escapeHtml(focusLabel)}</div>
@@ -199,24 +223,39 @@ function presentCoachModal(){
       ${also.length ? `<div class="muted" style="margin-top:8px"><b>Also watch:</b> ${escapeHtml(also.join(" · "))}</div>` : ""}
       ${prompt ? `<div class="muted" style="margin-top:10px"><b>Prompt:</b> ${escapeHtml(prompt)}</div>` : ""}
       ${(ans && ans!=="—") ? `<div class="muted" style="margin-top:6px"><b>You wrote:</b> ${escapeHtml(ans)}</div>` : ""}
-      ${(model) ? `<div class="muted" style="margin-top:6px"><b>Coach model:</b> ${escapeHtml(model)}</div>` : ""}
-      <div class="muted" style="margin-top:10px">Now choose your next move.</div>
+      ${model ? `<div class="muted" style="margin-top:6px"><b>Coach model:</b> ${escapeHtml(model)}</div>` : ""}
+      <div class="muted" style="margin-top:10px">Choose your next move.</div>
     `;
 
     showCoachModal({
+      avatarHtml: COACH.avatarHtml,
       avatar: COACH.avatar,
       title: COACH.name,
       sub: mustGym ? "Touchline Verdict • Gym required" : "Touchline Verdict",
       html,
       primaryText: mustGym ? "Enter Gym" : "Review Feedback",
       secondaryText: mustGym ? "Review Feedback" : "Gym (optional)",
-      onPrimary: ()=>{ if(mustGym) openGymFromResults(); else { state.showCorrections=true; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"});}catch(_){ } } },
-      onSecondary: ()=>{ if(mustGym){ state.showCorrections=true; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"});}catch(_){ } } else { openGymFromResults(); } }
+      onPrimary: ()=>{
+        if(mustGym) openGymFromResults();
+        else {
+          state.showCorrections = true; 
+          renderResults();
+          try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"}); }catch(_ ){}
+        }
+      },
+      onSecondary: ()=>{
+        if(mustGym){
+          state.showCorrections = true; 
+          renderResults();
+          try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"}); }catch(_ ){}
+        } else {
+          openGymFromResults();
+        }
+      }
     });
-  }catch(_){}
+  }catch(e){ console.error(e); }
 }
 
-}
 
 function showRewardPop(last){
   if(!el.rewardPop || !last) return;
@@ -2009,9 +2048,26 @@ function pickGymItem(preferTag){
   // Avoid immediate repetition
   const notRecent = candidates.filter(it=> !recent.includes(it._key));
   // Avoid repeating the same prompt text twice in a row when possible
-  const notSamePrompt = (lastPrompt ? notRecent.filter(it=> String(it.prompt||"").trim() && String(it.prompt||"").trim() !== lastPrompt) : notRecent);
+  const notSamePrompt = (lastPrompt ? notRecent.filter(it=> String(it.prompt||"").trim() && String(it.prompt||"").trim().toLowerCase() !== lastPrompt.trim().toLowerCase()) : notRecent);
   const pickFrom = notSamePrompt.length ? notSamePrompt : (notRecent.length ? notRecent : candidates);
-  const picked = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
+  let picked = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
+  // Ensure we always have a real prompt for the learner
+  if(!picked || !String(picked.prompt||"").trim()){
+    for(let triesPrompt=0; triesPrompt<8; triesPrompt++){
+      const cand = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
+      if(cand && String(cand.prompt||"").trim()) { picked = cand; break; }
+    }
+  }
+  // Last resort: pull a prompt from the theme bank
+  if(!picked || !String(picked.prompt||"").trim()){
+    try{
+      const themeIdx = (THEME_BY_ID[state.themeId] ? THEME_BY_ID[state.themeId].idx : 0);
+      const bank = Array.isArray(PROMPT_BANK[themeIdx]) ? PROMPT_BANK[themeIdx] : [];
+      const pr = bank.find(x=>x && x.text && String(x.text).trim()) || null;
+      if(pr) picked = Object.assign({}, picked||{}, {prompt:String(pr.text).trim(), answer:(picked&&picked.answer)||"—"});
+    }catch(_){ }
+  }
+
   state.workshop.lastPrompt = String(picked && picked.prompt ? picked.prompt : "").trim();
   if(picked && picked._key){
     const nextRecent = [picked._key].concat(recent.filter(k=>k!==picked._key)).slice(0,6);
