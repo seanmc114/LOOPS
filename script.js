@@ -11,6 +11,19 @@
 (function(){
   "use strict";
 
+  // ---- Safe storage (prevents blank screens if localStorage is blocked) ----
+  const __memStore = Object.create(null);
+  function lsGet(key){
+    try{ return lsGet(key); }
+    catch(e){
+      return Object.prototype.hasOwnProperty.call(__memStore, key) ? __memStore[key] : null;
+    }
+  }
+  function lsSet(key, val){
+    try{ lsSet(key, val); }
+    catch(e){ __memStore[key] = String(val); }
+  }
+
   const PROMPTS_PER_ROUND = 10;
   const PENALTY_SEC = 30;
 
@@ -88,17 +101,17 @@ const COACH = {
 
 
 function getPlayerName(){
-  return (localStorage.getItem(LS_NAME) || "").trim();
+  return (lsGet(LS_NAME) || "").trim();
 }
 function setPlayerName(v){
   const name = String(v||"").trim().slice(0,18);
-  localStorage.setItem(LS_NAME, name);
+  lsSet(LS_NAME, name);
   return name;
 }
 
 function loadRewards(){
   try{
-    const raw = localStorage.getItem(LS_REWARDS);
+    const raw = lsGet(LS_REWARDS);
     if(!raw) return {coins:0, loot:{}, last:null};
     const obj = JSON.parse(raw);
     obj.coins = Number(obj.coins)||0;
@@ -106,7 +119,7 @@ function loadRewards(){
     return obj;
   }catch(_){ return {coins:0, loot:{}, last:null}; }
 }
-function saveRewards(r){ localStorage.setItem(LS_REWARDS, JSON.stringify(r)); }
+function saveRewards(r){ lsSet(LS_REWARDS, JSON.stringify(r)); }
 
 const LOOT_POOL = [
   {id:"neon_cog", name:"Neon Cog Sticker"},
@@ -833,7 +846,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function getStars(themeId){
     try{
-      const raw = localStorage.getItem(kStars(themeId));
+      const raw = lsGet(kStars(themeId));
       if(!raw) return Array(10).fill(false);
       const arr = JSON.parse(raw);
       if(!Array.isArray(arr)) return Array(10).fill(false);
@@ -845,20 +858,20 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function setStar(themeId, level, val){
     const arr = getStars(themeId);
     arr[level-1] = !!val;
-    localStorage.setItem(kStars(themeId), JSON.stringify(arr));
+    lsSet(kStars(themeId), JSON.stringify(arr));
   }
   function starsCount(themeId){ return getStars(themeId).filter(Boolean).length; }
   function totalStars(){ return THEMES.reduce((sum,t)=> sum + starsCount(t.id), 0); }
 
   function incRounds(){
-    const v = Number(localStorage.getItem(kRounds())||"0")||0;
-    localStorage.setItem(kRounds(), String(v+1));
+    const v = Number(lsGet(kRounds())||"0")||0;
+    lsSet(kRounds(), String(v+1));
   }
-  function getRounds(){ return Number(localStorage.getItem(kRounds())||"0")||0; }
+  function getRounds(){ return Number(lsGet(kRounds())||"0")||0; }
 
   function loadPB(themeId, level, mode, lang){
     try{
-      const raw = localStorage.getItem(kPB(themeId,level,mode,lang));
+      const raw = lsGet(kPB(themeId,level,mode,lang));
       if(!raw) return null;
       const o = JSON.parse(raw);
       if(!o || typeof o.bestScore !== "number") return null;
@@ -869,7 +882,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const current = loadPB(themeId, level, mode, lang);
     const entry = { bestScore: scoreSec, bestWrong: wrong, bestTimeMs: timeMs, at: Date.now() };
     if(!current || scoreSec < current.bestScore){
-      localStorage.setItem(kPB(themeId,level,mode,lang), JSON.stringify(entry));
+      lsSet(kPB(themeId,level,mode,lang), JSON.stringify(entry));
       return true;
     }
     return false;
