@@ -1407,6 +1407,53 @@ function gymFocusType(){
 }
 
 
+
+function isBadGymSeed(ans){
+  const t = String(ans||"").trim();
+  if(!t) return true;
+  // Treat dash-only / punctuation-only as empty (e.g., "—", "-", "...")
+  if(/^[\-—–.·•,;:!?()\[\]{}'"]+$/.test(t)) return true;
+  // Very short fragments are usually unusable as seeds
+  if(t.length < 3) return true;
+  return false;
+}
+
+function buildGymPool(){
+  const items = Array.isArray(state.mark.items) ? state.mark.items : [];
+  const pool = [];
+  for(let i=0;i<items.length;i++){
+    const it = items[i] || {};
+    const prompt = String(it.prompt||"").trim();
+    const answer = String(it.answer||"").trim();
+    const key = (prompt+"|"+answer).slice(0,220);
+    pool.push(Object.assign({}, it, {_idx:i, _key:key, prompt, answer}));
+  }
+  return pool;
+}
+
+function pickGymItem(preferTag){
+  const pool = Array.isArray(state.workshop.pool) ? state.workshop.pool : [];
+  if(!pool.length) return (state.workshop.currentItem || state.workshop.refItem) || {prompt:"", answer:""};
+  const recent = Array.isArray(state.workshop.recentItemKeys) ? state.workshop.recentItemKeys : [];
+  // Start with valid seeds (avoid "—" etc.)
+  let candidates = pool.filter(it=> !isBadGymSeed(it.answer) || String(it.prompt||"").trim());
+  // Prefer items that match the focus tag, if we have enough
+  if(preferTag){
+    const tagged = candidates.filter(it=> (it.tags||[]).includes(preferTag));
+    if(tagged.length >= 2) candidates = tagged;
+  }
+  // Avoid immediate repetition
+  const notRecent = candidates.filter(it=> !recent.includes(it._key));
+  const pickFrom = notRecent.length ? notRecent : candidates;
+  const picked = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
+  if(picked && picked._key){
+    const nextRecent = [picked._key].concat(recent.filter(k=>k!==picked._key)).slice(0,6);
+    state.workshop.recentItemKeys = nextRecent;
+  }
+  return picked || {prompt:"", answer:""};
+}
+
+
 function openGymFromResults(){
   const focusTag = state.mark.focusTag || "detail";
   const focusLabel = state.mark.focusLabel || "Detail";
@@ -1421,7 +1468,11 @@ function openGymFromResults(){
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
-  state.workshop.refItem = refItem;
+  (state.workshop.currentItem || state.workshop.refItem) = refItem;
+  state.workshop.pool = buildGymPool();
+  state.workshop.recentItemKeys = [];
+  state.workshop.currentItem = null;
+
   state.workshop.stats = {correct:0, attempts:0, streak:0};
   state.workshop.gate = { type:"streak", target: gymTarget(state.level, state.mark.wrong) };
 
@@ -1456,6 +1507,9 @@ function openGymFromResults(){
   }
 
   function nextGymDrill(){
+    // Pick a fresh source item to avoid repetition and keep drills tied to the learner's own work
+    state.workshop.currentItem = pickGymItem(state.workshop.focusTag);
+
     const type = gymFocusType();
     const variant = Math.random() < 0.55 ? "choice" : "type";
 
@@ -1476,7 +1530,7 @@ function openGymFromResults(){
       
 if(type==="spelling"){
   if(el.wsPrompt) el.wsPrompt.textContent = (L==="es") ? "Pick the correct spelling (coach focus)." : "Pick the correct spelling.";
-  const ref = state.workshop.refItem || {answer:""};
+  const ref = (state.workshop.currentItem || state.workshop.refItem) || {answer:""};
   const ans = String(ref.answer||"");
   const fx = (L==="es") ? wordFixesES(ans) : {fixed:ans, changes:[]};
 
@@ -1638,36 +1692,55 @@ if(type==="connector"){
         });
         if(el.wsHelp) el.wsHelp.textContent = "Aim: include the correct form of ‘to be’ (es/está/est…).";
       }
-      else if(type==="detail"){
-        if(el.wsPrompt) el.wsPrompt.textContent = "Pick the best upgraded answer (more detail).";
-        const base = (L==="es") ? "Mi amigo es simpático." : (L==="fr") ? "Mon ami est sympa." : "Mein Freund ist nett.";
-        const good = (L==="es") ? "Mi amigo es simpático y muy trabajador." :
-                     (L==="fr") ? "Mon ami est sympa et très travailleur." :
-                                  "Mein Freund ist nett und sehr fleißig.";
-        const opts = shuffle([good, base, tidySuggestion(base.replace(".", " y divertido.")), base.replace(".", "")]).slice(0,4);
+      else 
+if(type==="detail" || type==="upgrade"){
+        const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:""});
+        const ptxt = String(ref.prompt||"").trim();
+        const ans = String(ref.answer||"").trim();
+        const model = String(ref.suggestion||"").trim() || pickModelAnswer({text: ptxt || "Describe something."}, ans || "");
+        const base = (!isBadGymSeed(ans)) ? tidySuggestion(ans) : (model.split(".")[0] + ".");
+        const stronger = tidySuggestion(model);
+
+        if(el.wsPrompt){
+          el.wsPrompt.textContent = (type==="detail")
+            ? ((L==="es") ? "Pick the answer with ONE extra detail:"
+               : (L==="fr") ? "Choisis la réponse avec UN détail en plus :"
+                            : "Wähle die Antwort mit EINEM Extra-Detail:")
+            : ((L==="es") ? "Pick the strongest model answer:"
+               : (L==="fr") ? "Choisis la meilleure réponse modèle :"
+                            : "Wähle die beste Musterantwort:");
+        }
+
+        const weak = (L==="es") ? "Es bueno." : (L==="fr") ? "C’est bien." : "Es ist gut.";
+        const near = stronger.replace(/\.$/, "") + ((L==="es") ? " y además es muy interesante." : (L==="fr") ? " et en plus c’est très intéressant." : " und außerdem ist es sehr interessant.");
+        const opts = shuffle([
+          stronger,
+          (type==="detail") ? near : stronger,
+          base || tidySuggestion(weak),
+          tidySuggestion(weak)
+        ]).slice(0,4);
+
+        el.wsChoices.innerHTML = "";
         opts.forEach(o=>{
           const b=document.createElement("button");
           b.className="wsChoice"; b.type="button"; b.textContent=o;
-          b.addEventListener("click", ()=> gymMark(o===good, o===good ? "Nice — stronger detail." : "Try again: pick the option with extra detail."));
+          b.addEventListener("click", ()=>{
+            const ok = (o===stronger) || o.startsWith(stronger.slice(0, Math.min(18, stronger.length)));
+            gymMark(ok, ok ? "Yes. That’s the standard." : "No. Pick the cleanest, most detailed option.");
+          });
           el.wsChoices.appendChild(b);
         });
-        if(el.wsHelp) el.wsHelp.textContent = "Aim: add ONE extra detail (adjective, reason, or second fact).";
-      }
-      else {
-        if(el.wsPrompt) el.wsPrompt.textContent = "Pick the best upgraded answer.";
-        const good = pickModelAnswer({text:""}, "");
-        const bad = (L==="es") ? "Es bueno." : (L==="fr") ? "C’est bien." : "Es ist gut.";
-        const opts = shuffle([good, tidySuggestion(bad), bad, good.replace(".", " y muy interesante.")]).slice(0,4);
-        opts.forEach(o=>{
-          const b=document.createElement("button");
-          b.className="wsChoice"; b.type="button"; b.textContent=o;
-          b.addEventListener("click", ()=>{ const ok = (o===good) || o.startsWith(good); gymMark(ok, ok?"Nice — strong model.":"Not quite — pick the strongest model."); });
-          el.wsChoices.appendChild(b);
-        });
-        if(el.wsHelp) el.wsHelp.textContent = "Choose the option with more detail + clean structure.";
+
+        if(el.wsHelp){
+          const hintP = ptxt ? `Prompt: ${ptxt}` : "";
+          const hintM = stronger ? `Coach model: ${stronger}` : "";
+          el.wsHelp.textContent = [hintP, hintM].filter(Boolean).join(" • ");
+        }
+
       }
 
       return;
+
     }
 
     // TYPE variant
@@ -1678,7 +1751,7 @@ if(type==="connector"){
 
     
 if(type==="spelling"){
-  const ref = state.workshop.refItem || {answer:""};
+  const ref = (state.workshop.currentItem || state.workshop.refItem) || {answer:""};
   const fx = (state.lang==="es") ? wordFixesES(ref.answer||"") : {fixed: ref.answer||""};
   if(el.wsPrompt) el.wsPrompt.textContent =
     (state.lang==="es") ? `Type the corrected version (spelling/accents):\n"${String(ref.answer||"").trim()}"` :
@@ -1723,27 +1796,43 @@ if(type==="connector"){
                                                (L==="fr") ? "Tape UNE phrase avec être / avoir." :
                                                             "Schreibe EINEN Satz mit sein.";
       if(el.wsHelp) el.wsHelp.textContent = "Example: El profesor es simpático.";
-    } else if(type==="detail"){
-      const ref = state.workshop.refItem || {prompt:"", answer:""};
+    
+  } else if(type==="detail"){
+      const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:"", suggestion:""});
       const baseAns = String(ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
+      const model = String(ref.suggestion||"").trim() || pickModelAnswer({text: basePrompt || "Describe something."}, baseAns || "");
 
-      if(baseAns){
-        if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Upgrade THIS answer (add ONE extra detail):\n"${baseAns}"` :
-          (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):\n"${baseAns}"` :
-                       `Verbessere DIESE Antwort (ein Detail mehr):\n"${baseAns}"`;
-      }else{
-        if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Write a NEW upgraded answer for:\n"${basePrompt||"the last prompt"}"` :
-          (L==="fr") ? `Écris une NOUVELLE réponse améliorée pour :\n"${basePrompt||"le dernier prompt"}"` :
-                       `Schreibe eine NEUE verbesserte Antwort für:\n"${basePrompt||"die letzte Aufgabe"}"`;
+      if(el.wsPrompt){
+        if(!isBadGymSeed(baseAns)){
+          el.wsPrompt.textContent =
+            (L==="es") ? `Upgrade THIS answer (add ONE extra detail):
+"${baseAns}"` :
+            (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):
+"${baseAns}"` :
+                         `Verbessere DIESE Antwort (ein Detail mehr):
+"${baseAns}"`;
+        }else{
+          el.wsPrompt.textContent =
+            (L==="es") ? `Write a NEW answer with ONE extra detail for:
+"${basePrompt||"the prompt"}"` :
+            (L==="fr") ? `Écris une NOUVELLE réponse avec UN détail en plus pour :
+"${basePrompt||"le prompt"}"` :
+                         `Schreibe eine NEUE Antwort mit EINEM Detail mehr für:
+"${basePrompt||"die Aufgabe"}"`;
+        }
       }
 
-      if(el.wsHelp) el.wsHelp.textContent =
-        (L==="es") ? "Aim: ONE extra detail (también / además…) • 6+ words." :
-        (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
-                     "Ziel: EIN Detail mehr • 6+ Wörter.";} else {
+      if(el.wsHelp){
+        const lines = [];
+        if(basePrompt) lines.push(`Prompt: ${basePrompt}`);
+        if(model) lines.push(`Coach model: ${model}`);
+        lines.push((L==="es") ? "Aim: ONE extra detail • 6+ words." :
+                   (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
+                                "Ziel: EIN Detail mehr • 6+ Wörter.");
+        el.wsHelp.textContent = lines.join(" • ");
+      }
+    } else {
       if(el.wsPrompt) el.wsPrompt.textContent = "Type ONE improved sentence (clean + slightly longer).";
       if(el.wsHelp) el.wsHelp.textContent = "Aim for 8+ words.";
     }
@@ -1758,7 +1847,7 @@ if(type==="connector"){
     let ok=false, msgOk="Nice!", msgNo="Try again.";
     
 if(type==="spelling"){
-  const ref = state.workshop.refItem || {answer:""};
+  const ref = (state.workshop.currentItem || state.workshop.refItem) || {answer:""};
   const fx = (state.lang==="es") ? wordFixesES(ref.answer||"") : {fixed: ref.answer||""};
   const want = String(fx.fixed||"").trim().toLowerCase();
   ok = val.trim().toLowerCase() === want;
