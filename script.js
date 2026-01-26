@@ -1086,6 +1086,54 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10) return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
 
+
+// --- Diff highlighting (show exactly what changed) ---
+function _tok(s){
+  // Unicode-aware tokeniser: words/numbers OR single non-space chars (punctuation)
+  return String(s||"").match(/[\p{L}\p{N}]+|[^\s]/gu) || [];
+}
+function _isPunc(t){ return /^[\]\[\(\)\{\},.!?:;…]$/.test(t); }
+function _joinTokens(tokens){
+  let out = "";
+  for(let i=0;i<tokens.length;i++){
+    const t = tokens[i];
+    const prev = tokens[i-1];
+    const needSpace = i>0 && !_isPunc(t) && prev && !/^[\(\[\{]$/.test(prev) && !_isPunc(prev);
+    out += (needSpace ? " " : "") + t;
+  }
+  return out;
+}
+function _lcsMask(a,b){
+  const n=a.length, m=b.length;
+  const dp = Array.from({length:n+1}, ()=> new Array(m+1).fill(0));
+  for(let i=1;i<=n;i++){
+    for(let j=1;j<=m;j++){
+      dp[i][j] = (a[i-1]===b[j-1]) ? (dp[i-1][j-1]+1) : Math.max(dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  const keepA = new Array(n).fill(false);
+  const keepB = new Array(m).fill(false);
+  let i=n, j=m;
+  while(i>0 && j>0){
+    if(a[i-1]===b[j-1]){ keepA[i-1]=true; keepB[j-1]=true; i--; j--; }
+    else if(dp[i-1][j] >= dp[i][j-1]) i--;
+    else j--;
+  }
+  return {keepA, keepB};
+}
+function diffMarkup(answer, model, ok){
+  const a = String(answer||"");
+  const b = String(model||"");
+  if(ok || !a || !b) return { answerHtml: escapeHtml(a||"—"), modelHtml: escapeHtml(b||"—") };
+
+  const A=_tok(a), B=_tok(b);
+  const {keepA, keepB} = _lcsMask(A,B);
+
+  const aOut = A.map((t,idx)=> keepA[idx] ? escapeHtml(t) : `<span class="tokBad">${escapeHtml(t)}</span>`);
+  const bOut = B.map((t,idx)=> keepB[idx] ? escapeHtml(t) : `<span class="tokFix">${escapeHtml(t)}</span>`);
+
+  return { answerHtml: _joinTokens(aOut), modelHtml: _joinTokens(bOut) };
+}
   async function markWithAI(payload){
     if(typeof window.aiCorrect !== "function") throw new Error("aiCorrect not found");
     const timeoutMs = 12000;
@@ -1203,9 +1251,14 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return {...it, suggestion: sugg, why};
   });
 
-  state.showCorrections = false;
+  state.showCorrections = (state.mark && state.mark.wrong>0);
   renderResults();
   show("results");
+  try{
+    if(state.showCorrections && el.feedbackList){
+      el.feedbackList.scrollIntoView({behavior:"smooth", block:"start"});
+    }
+  }catch(_){ }
 
 
   // Coach intermission (tap to continue)
@@ -1297,7 +1350,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       avatar: COACH.avatar,
       sub,
       html,
-      primaryText: "Gym now 🔒",
+      primaryText: "Gym now (required)",
       secondaryText: "Back to Home",
       onPrimary: ()=>{ openGymFromResults(); },
       onSecondary: ()=>{ show("home"); renderThemeTiles(); }
@@ -1319,7 +1372,13 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 function renderResults(){
     updatePills();
     const m=state.mark;
-    if(el.aiStatusText) el.aiStatusText.textContent = state.ai.ok ? "Marked by coach ✓" : `Marked (AI slow/failed — fallback used): ${state.ai.error}`;
+    if(el.aiStatusText){
+      if(state.ai.ok){
+        el.aiStatusText.textContent = (m.wrong>0) ? "Coach verdict — review your fixes below." : "Coach verdict — solid round.";
+      }else{
+        el.aiStatusText.textContent = `Coach offline — local marking used (${state.ai.error}).`;
+      }
+    }
     if(el.timeOut) el.timeOut.textContent = fmtTime(state.elapsedMs);
     if(el.wrongOut) el.wrongOut.textContent = String(m.wrong);
     if(el.scoreOut) el.scoreOut.textContent = `${m.scoreSec.toFixed(1)}s`;
@@ -1328,7 +1387,9 @@ function renderResults(){
     if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
 
     if(el.toggleFeedbackBtn){
-      el.toggleFeedbackBtn.textContent = state.showCorrections ? "Hide Corrections" : "Show Corrections";
+      el.toggleFeedbackBtn.textContent = state.showCorrections
+        ? "Hide detailed feedback"
+        : (m.wrong>0 ? "Review mistakes (recommended)" : "Show model answers");
     }
 
     if(el.feedbackList){
@@ -1338,29 +1399,31 @@ function renderResults(){
       }else{
         el.feedbackList.classList.remove("hidden");
         el.feedbackList.innerHTML="";
-        m.items.forEach(it=>{
-          const card=document.createElement("div");
-          card.className="fbCard";
-          card.innerHTML = `
-            <div class="fbTop">
-              <div class="fbNum">${it.n}</div>
-              <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
-              <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
-            </div>
-            <div class="fbBody">
-              <div class="fbBox">
-                <div class="fbLabel">Your answer</div>
-                <div class="fbText">${escapeHtml(it.answer)}</div>
-              </div>
-              <div class="fbBox">
-                <div class="fbLabel">Coach model (what “correct” looks like)</div>
-                <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
-              </div>
-            </div>
-            <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
-          `;
-          el.feedbackList.appendChild(card);
-        });
+        
+m.items.forEach(it=>{
+  const card=document.createElement("div");
+  card.className="fbCard";
+  const dm = diffMarkup(it.answer, it.suggestion||"—", it.ok);
+  card.innerHTML = `
+    <div class="fbTop">
+      <div class="fbNum">${it.n}</div>
+      <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
+      <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
+    </div>
+    <div class="fbBody">
+      <div class="fbBox">
+        <div class="fbLabel">You wrote</div>
+        <div class="fbText">${dm.answerHtml}</div>
+      </div>
+      <div class="fbBox">
+        <div class="fbLabel">Coach improved version</div>
+        <div class="fbText">${dm.modelHtml}</div>
+      </div>
+    </div>
+    <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
+  `;
+  el.feedbackList.appendChild(card);
+});
       }
     }
 
