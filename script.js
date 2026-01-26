@@ -13,6 +13,21 @@
 
   const PROMPTS_PER_ROUND = 10;
   const PENALTY_SEC = 30;
+// ---- Safe storage (prevents crashes in private mode / blocked storage) ----
+const storage = (function(){
+  const mem = Object.create(null);
+  function get(k){
+    try{ return localStorage.getItem(k); }catch(_){ return Object.prototype.hasOwnProperty.call(mem,k) ? mem[k] : null; }
+  }
+  function set(k,v){
+    try{ localStorage.setItem(k, String(v)); }catch(_){ mem[k] = String(v); }
+  }
+  function remove(k){
+    try{ localStorage.removeItem(k); }catch(_){ delete mem[k]; }
+  }
+  return {get,set,remove};
+})();
+
 
 // --- Player + Coach ---
 const LS_NAME = "loops_playerName_v1";
@@ -66,17 +81,17 @@ const COACH = {
 
 
 function getPlayerName(){
-  return (localStorage.getItem(LS_NAME) || "").trim();
+  return (storage.get(LS_NAME) || "").trim();
 }
 function setPlayerName(v){
   const name = String(v||"").trim().slice(0,18);
-  localStorage.setItem(LS_NAME, name);
+  storage.set(LS_NAME, name);
   return name;
 }
 
 function loadRewards(){
   try{
-    const raw = localStorage.getItem(LS_REWARDS);
+    const raw = storage.get(LS_REWARDS);
     if(!raw) return {coins:0, loot:{}, last:null};
     const obj = JSON.parse(raw);
     obj.coins = Number(obj.coins)||0;
@@ -84,7 +99,7 @@ function loadRewards(){
     return obj;
   }catch(_){ return {coins:0, loot:{}, last:null}; }
 }
-function saveRewards(r){ localStorage.setItem(LS_REWARDS, JSON.stringify(r)); }
+function saveRewards(r){ storage.set(LS_REWARDS, JSON.stringify(r)); }
 
 const LOOT_POOL = [
   {id:"neon_cog", name:"Neon Cog Sticker"},
@@ -881,7 +896,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function getStars(themeId){
     try{
-      const raw = localStorage.getItem(kStars(themeId));
+      const raw = storage.get(kStars(themeId));
       if(!raw) return Array(10).fill(false);
       const arr = JSON.parse(raw);
       if(!Array.isArray(arr)) return Array(10).fill(false);
@@ -893,20 +908,20 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function setStar(themeId, level, val){
     const arr = getStars(themeId);
     arr[level-1] = !!val;
-    localStorage.setItem(kStars(themeId), JSON.stringify(arr));
+    storage.set(kStars(themeId), JSON.stringify(arr));
   }
   function starsCount(themeId){ return getStars(themeId).filter(Boolean).length; }
   function totalStars(){ return THEMES.reduce((sum,t)=> sum + starsCount(t.id), 0); }
 
   function incRounds(){
-    const v = Number(localStorage.getItem(kRounds())||"0")||0;
-    localStorage.setItem(kRounds(), String(v+1));
+    const v = Number(storage.get(kRounds())||"0")||0;
+    storage.set(kRounds(), String(v+1));
   }
-  function getRounds(){ return Number(localStorage.getItem(kRounds())||"0")||0; }
+  function getRounds(){ return Number(storage.get(kRounds())||"0")||0; }
 
   function loadPB(themeId, level, mode, lang){
     try{
-      const raw = localStorage.getItem(kPB(themeId,level,mode,lang));
+      const raw = storage.get(kPB(themeId,level,mode,lang));
       if(!raw) return null;
       const o = JSON.parse(raw);
       if(!o || typeof o.bestScore !== "number") return null;
@@ -917,7 +932,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const current = loadPB(themeId, level, mode, lang);
     const entry = { bestScore: scoreSec, bestWrong: wrong, bestTimeMs: timeMs, at: Date.now() };
     if(!current || scoreSec < current.bestScore){
-      localStorage.setItem(kPB(themeId,level,mode,lang), JSON.stringify(entry));
+      storage.set(kPB(themeId,level,mode,lang), JSON.stringify(entry));
       return true;
     }
     return false;
@@ -1210,7 +1225,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
     const isLocked = !!state.locked[state.idx];
     if(isLocked){
-      input.readOnly = true;
+      input.disabled = true;
       input.classList.add("locked");
     }else{
       input.addEventListener("input", ()=>{ state.answers[state.idx] = input.value; });
@@ -1225,18 +1240,24 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   function handlePrev(){
     if(state.idx===0) return;
-    // Save & lock the current answer before moving away (prevents “back” wiping answers)
+    // Save defensively: never overwrite a non-empty saved answer with an empty DOM value.
     const cur = document.getElementById("mainInput");
-    if(cur) state.answers[state.idx] = cur.value;
+    if(cur){
+      const v = cur.value;
+      if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
+    }
     state.locked[state.idx] = true;
     state.idx--;
     buildPromptUI();
     updateGameHeader();
   }
   function handleNext(){
-    // Save current input (mobile can miss last keystroke) and lock once the learner moves on
+    // Save defensively and lock once the learner moves on
     const cur = document.getElementById("mainInput");
-    if(cur) state.answers[state.idx] = cur.value;
+    if(cur){
+      const v = cur.value;
+      if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
+    }
     state.locked[state.idx] = true;
     if(state.idx < PROMPTS_PER_ROUND-1){
       state.idx++;
@@ -1396,10 +1417,40 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   try{ showCoachIntermission(); }catch(e){ console.error(e); }
     }catch(err){
       console.error(err);
-      try{ toast("Coach glitch — press Finish again, or Quit."); }catch(_){}
-      state.roundFinished = false;
+      // Fallback: still produce results so the player can always finish the round.
+      try{
+        const rubric = levelRubric(state.level);
+        const items = [];
+        let wrong = 0;
+        for(let i=0;i<PROMPTS_PER_ROUND;i++){
+          const p = state.prompts[i] || {text:"—", badge:""};
+          const ans = String(state.answers[i]||"").trim();
+          let ok = !!ans;
+          let reason = ok ? "" : "Blank";
+          if(ok){
+            const w = countWords(ans);
+            if(w < rubric.minWords || ans.length < rubric.minChars){ ok=false; reason="Too short"; }
+            if(ok && rubric.requireBe && (p.badge==="ser") && !beVerbPresent(ans)){ ok=false; reason="Missing to-be"; }
+          }
+          if(!ok) wrong++;
+          const suggestion = pickModelAnswer(p, ans);
+          const det = detectTags(p.text||"", ans||"", state.lang, rubric);
+          items.push({ n:i+1, prompt:p.text||"—", answer:ans||"—", ok, reason, suggestion, tip: tipForTags(det.tags,state.lang)||"", why: ok?"":("To score: "+reason+"."), tags: det.tags, examples: det.examples });
+        }
+        const scoreSec = computeScoreSec(state.elapsedMs, wrong);
+        const passed = roundPassesUnlock(wrong, scoreSec, state.level);
+        const focus = pickRoundFocus(items, state.lang, rubric);
+        state.mark = { items, wrong, scoreSec, passed, focus: `${focus.label} (${focus.count})`, focusTag: focus.tag, focusLabel: focus.label, focusCount: focus.count, focusExamples: focus.examples, topTags: focus.top, tagCounts: focus.counts };
+        state.gymRequired = (wrong >= 3);
+        state.showCorrections = (wrong > 0);
+        state.ai.ok = false;
+        state.ai.error = "fallback used";
+      }catch(_){ }
+      try{ toast("Coach was slow — showing fallback results."); }catch(_){ }
     }finally{
       state.isMarking = false;
+      // Ensure results are visible if we have a mark payload
+      try{ if(state.mark){ renderResults(); show("results"); } }catch(_){ }
       setNavLocked(false);
     }
 }
