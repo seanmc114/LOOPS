@@ -1468,7 +1468,8 @@ function openGymFromResults(){
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
-  (state.workshop.currentItem || state.workshop.refItem) = refItem;
+  state.workshop.refItem = refItem;
+  state.workshop.currentItem = null;
   state.workshop.pool = buildGymPool();
   state.workshop.recentItemKeys = [];
   state.workshop.currentItem = null;
