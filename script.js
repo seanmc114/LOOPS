@@ -589,6 +589,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     scoreOut: $("scoreOut"),
     targetOut: $("targetOut"),
     coachFocus: $("coachFocus"),
+    coachVerdict: $("coachVerdict"),
     toggleFeedbackBtn: $("toggleFeedbackBtn"),
     feedbackList: $("feedbackList"),
     playAgainBtn: $("playAgainBtn"),
@@ -1211,8 +1212,9 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     wrap.innerHTML = `
       <div class="promptText">${p ? p.text : "—"}</div>
       <div class="chipRow">${chipText}</div>
+      ${scaffoldHtml(scaffoldForPrompt(p ? p.text : "", state.level, state.lang))}
       <div class="inputRow">
-        <textarea class="input mainInput" id="mainInput" rows="2" spellcheck="false" placeholder="${LANGS[state.lang].placeholder}"></textarea>
+        <textarea class="input mainInput" id="mainInput" rows="4" spellcheck="false" placeholder="${LANGS[state.lang].placeholder}"></textarea>
         <button class="btn ghost tiny" id="speakBtn" type="button">🔊</button>
         <button class="btn ghost tiny" id="micBtn" type="button">🎤</button>
       </div>
@@ -1287,6 +1289,54 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function beVerbPresent(s){ const x=norm(s); if(state.lang==="es") return /(\bes\b|\bson\b|\bestoy\b|\bestá\b|\bsoy\b)/.test(x); if(state.lang==="fr") return /(\bc\s*est\b|\best\b|\bsont\b|\bsuis\b|\bai\b|\bas\b|\ba\b|\bont\b)/.test(x); if(state.lang==="de") return /(\bist\b|\bsind\b|\bbin\b|\bseid\b|\bhabe\b|\bhat\b|\bhaben\b)/.test(x); return false; }
   function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10 && t!=="—." && t!=="—") return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
+
+
+  // ---- Scaffold hints (mini checklist per prompt) ----
+  function scaffoldForPrompt(text, level, lang){
+    const t = String(text||"").toLowerCase();
+    const lvl = Math.min(10, Math.max(1, Number(level)||1));
+
+    const base = [];
+    if(lvl <= 2){ base.push("1 clean sentence"); base.push("+ 1 extra detail"); }
+    else if(lvl <= 5){ base.push("2 ideas"); base.push("1 opinion"); base.push("1 detail"); }
+    else { base.push("opinion + reason (porque)"); base.push("1 connector"); base.push("1 extra detail"); }
+
+    let out = [];
+    // Topic-specific scaffolds (JC-style)
+    if(t.includes("town") || t.includes("city") || t.includes("village") || t.includes("pueblo") || t.includes("ciudad")){
+      out = ["location / size", "2 places (parque, cine…)", "1 activity"].concat(base);
+    } else if(t.includes("school") || t.includes("college") || t.includes("coleg") || t.includes("institut") || t.includes("escuela")){
+      out = ["where it is", "2 details (subjects / teachers / rules)", "opinion", "why (porque)"];
+    } else if(t.includes("best friend") || t.includes("friend") || t.includes("amigo") || t.includes("person") || t.includes("admire")){
+      out = ["appearance", "personality", "what they do/like", "why (porque)"];
+    } else if(t.includes("house") || t.includes("home") || t.includes("casa") || t.includes("bedroom") || t.includes("habitaci")){
+      out = ["where it is", "2 rooms / objects", "opinion", "1 extra detail"].concat(base);
+    } else if(t.includes("routine") || t.includes("weekday") || t.includes("daily") || t.includes("día") || t.includes("horario")){
+      out = ["time phrase", "3 verbs", "1 connector", "opinion"].concat(base);
+    } else {
+      out = base;
+    }
+
+    // De-dup + cap length
+    const seen = new Set();
+    const clean = [];
+    for(const s of out){
+      const k = String(s||"").trim();
+      if(!k) continue;
+      const low = k.toLowerCase();
+      if(seen.has(low)) continue;
+      seen.add(low);
+      clean.push(k);
+    }
+    return clean.slice(0,6);
+  }
+
+  function scaffoldHtml(list){
+    if(!list || !list.length) return "";
+    return `<div class="scaffoldBar">${list.map(x=>`<span class="scaffoldChip">${escapeHtml(x)}</span>`).join("")}</div>`;
+  }
+
+  
 
   async function markWithAI(payload){
     if(typeof window.aiCorrect !== "function") throw new Error("aiCorrect not found");
@@ -1376,7 +1426,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   state.mark = { items, wrong, scoreSec, passed, focus: `${focus.label} (${focus.count})`, focusTag: focus.tag, focusLabel: focus.label, focusCount: focus.count, focusExamples: focus.examples, topTags: focus.top, tagCounts: focus.counts };
   state.gymRequired = (wrong >= 3);
   // Make feedback a cornerstone: show it by default when anything is wrong
-  state.showCorrections = (wrong > 0);
+  state.showCorrections = true;
 
   incRounds();
   savePBIfBetter(state.themeId, state.level, state.mode, state.lang, scoreSec, wrong, state.elapsedMs);
@@ -1442,7 +1492,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
         const focus = pickRoundFocus(items, state.lang, rubric);
         state.mark = { items, wrong, scoreSec, passed, focus: `${focus.label} (${focus.count})`, focusTag: focus.tag, focusLabel: focus.label, focusCount: focus.count, focusExamples: focus.examples, topTags: focus.top, tagCounts: focus.counts };
         state.gymRequired = (wrong >= 3);
-        state.showCorrections = (wrong > 0);
+        state.showCorrections = true;
         state.ai.ok = false;
         state.ai.error = "fallback used";
       }catch(_){ }
@@ -1562,45 +1612,69 @@ function renderResults(){
 
     if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
 
+    if(el.coachVerdict){
+      const nm = getPlayerName() || 'mate';
+      const focus = (m.focusLabel||'Focus') + (m.focusCount?` (${m.focusCount})`:'' );
+      const msg = m.passed
+        ? `Good, ${nm}. Level unlocked. Don’t get sloppy.`
+        : `Right, ${nm}. ${focus}. Fix it.`;
+      const why = state.gymRequired
+        ? 'Gym required: 3+ wrong. Clear the reps to unlock the exit.'
+        : 'You can tap Gym for optional reps, or try again for a cleaner round.';
+      el.coachVerdict.innerHTML = `<b>${escapeHtml(COACH.name)}:</b> ${escapeHtml(msg)}<br><span class="muted">${escapeHtml(why)}</span>`;
+    }
+
+
     if(el.toggleFeedbackBtn){
       el.toggleFeedbackBtn.textContent = state.showCorrections ? "Hide Corrections" : "Show Corrections";
     }
 
     if(el.feedbackList){
-      if(!state.showCorrections){
-        el.feedbackList.classList.add("hidden");
-        el.feedbackList.innerHTML = "";
-      }else{
-        el.feedbackList.classList.remove("hidden");
-        el.feedbackList.innerHTML="";
-        m.items.forEach(it=>{
-          const card=document.createElement("div");
-          card.className="fbCard";
-          card.innerHTML = `
-            <div class="fbTop">
-              <div class="fbNum">${it.n}</div>
-              <div class="fbPrompt">${escapeHtml(it.prompt)}</div>
-              <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
-            </div>
-            <div class="fbBody">
-              <div class="fbBox">
-                <div class="fbLabel">Your answer</div>
-                <div class="fbText">${escapeHtml(it.answer)}</div>
-              </div>
-              <div class="fbBox">
-                <div class="fbLabel">Coach model (what “correct” looks like)</div>
-                <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
-              </div>
-            </div>
-            <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
-          `;
-          el.feedbackList.appendChild(card);
-        });
+      // Keep feedback available (even when hidden) so it never feels 'empty'
+      el.feedbackList.classList.toggle("hidden", !state.showCorrections);
+      el.feedbackList.innerHTML = "";
 
-        // Auto-scroll to feedback so it’s not hidden (especially on mobile)
+      const items = (m.items && m.items.length) ? m.items : state.prompts.map((p,i)=>({
+        n:i+1,
+        prompt: p ? p.text : "—",
+        answer: String(state.answers[i]||"").trim() || "—",
+        ok: true,
+        suggestion: pickModelAnswer(p, state.answers[i]||""),
+        tip: "",
+        why: ""
+      }));
+
+      items.forEach(it=>{
+        const sc = scaffoldForPrompt(it.prompt, state.level, state.lang);
+        const card=document.createElement("div");
+        card.className="fbCard";
+        card.innerHTML = `
+          <div class="fbTop">
+            <div class="fbNum">${it.n}</div>
+            <div class="fbPrompt">${escapeHtml(it.prompt)}${scaffoldHtml(sc)}</div>
+            <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
+          </div>
+          <div class="fbBody">
+            <div class="fbBox">
+              <div class="fbLabel">Your answer</div>
+              <div class="fbText">${escapeHtml(it.answer)}</div>
+            </div>
+            <div class="fbBox">
+              <div class="fbLabel">Coach model (what “correct” looks like)</div>
+              <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
+            </div>
+          </div>
+          <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
+        `;
+        el.feedbackList.appendChild(card);
+      });
+
+      // Nudge: if we're showing, scroll into view so it doesn't hide below the fold on mobile
+      if(state.showCorrections){
         setTimeout(()=>{ try{ el.feedbackList.scrollIntoView({block:"start"}); }catch(_){ } }, 60);
       }
     }
+
 
     if(el.workshopBtn) el.workshopBtn.textContent = state.gymRequired ? "Gym" : "Gym (optional)";
     if(el.resultsHint) el.resultsHint.textContent = state.gymRequired ? "Gym is required when you get 3+ wrong. You can go Back to Home and train a different theme — but this level stays locked until you pass." : "Tip: aim for ≤2 wrong and beat the target time to unlock the next level.";
@@ -1667,7 +1741,7 @@ function isBadGymSeed(ans){
   // Treat dash-only / punctuation-only as empty (e.g., "—", "-", "...")
   if(/^[\-—–.·•,;:!?()\[\]{}'"]+$/.test(t)) return true;
   // Treat leading dash fragments as unusable models (e.g., "—. Porque ...")
-  if(/^[\-—–]\s*\.?\s*/.test(t) && t.length < 18) return true;
+  if(/^[\-—–]\s*\.?\s*/.test(t)) return true;
   // Very short fragments are usually unusable as seeds
   if(t.length < 3) return true;
   return false;
@@ -1690,6 +1764,7 @@ function pickGymItem(preferTag){
   const pool = Array.isArray(state.workshop.pool) ? state.workshop.pool : [];
   if(!pool.length) return (state.workshop.currentItem || state.workshop.refItem) || {prompt:"", answer:""};
   const recent = Array.isArray(state.workshop.recentItemKeys) ? state.workshop.recentItemKeys : [];
+  const lastPrompt = String(state.workshop.lastPrompt || "");
   // Start with valid seeds (avoid "—" etc.)
   let candidates = pool.filter(it=> !isBadGymSeed(it.answer) || String(it.prompt||"").trim());
   // Prefer items that match the focus tag, if we have enough
@@ -1699,8 +1774,11 @@ function pickGymItem(preferTag){
   }
   // Avoid immediate repetition
   const notRecent = candidates.filter(it=> !recent.includes(it._key));
-  const pickFrom = notRecent.length ? notRecent : candidates;
+  // Avoid repeating the same prompt text twice in a row when possible
+  const notSamePrompt = (lastPrompt ? notRecent.filter(it=> String(it.prompt||"").trim() && String(it.prompt||"").trim() !== lastPrompt) : notRecent);
+  const pickFrom = notSamePrompt.length ? notSamePrompt : (notRecent.length ? notRecent : candidates);
   const picked = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
+  state.workshop.lastPrompt = String(picked && picked.prompt ? picked.prompt : "").trim();
   if(picked && picked._key){
     const nextRecent = [picked._key].concat(recent.filter(k=>k!==picked._key)).slice(0,6);
     state.workshop.recentItemKeys = nextRecent;
