@@ -1299,3 +1299,54 @@ body::after{
 .workshopCard textarea::placeholder,
 .workshopCard input::placeholder{ color: rgba(255,255,255,.55); }
 
+
+
+/* Gym exit reward */
+.wsExitReady{ box-shadow: 0 0 0 3px rgba(255,255,255,0.15), 0 12px 26px rgba(0,0,0,0.28); animation: wsPulse 1.1s ease-in-out infinite; }
+@keyframes wsPulse{ 0%{ transform: translateY(0) scale(1);} 50%{ transform: translateY(-1px) scale(1.04);} 100%{ transform: translateY(0) scale(1);} }
+
+
+/* ===== v16 MOBILE + GYM READABILITY PATCH ===== */
+
+/* Mobile: smoother scrolling + less heavy paint */
+@media (max-width: 760px){
+  /* Avoid huge gradient overlays that repaint while scrolling */
+  .card::after{ display:none !important; }
+
+  /* Remove costly blur effects on mobile */
+  .glass, .modal, .panel, .card{ backdrop-filter: none !important; -webkit-backdrop-filter:none !important; }
+
+  /* Bigger answer box and prevent iOS zoom-on-focus */
+  textarea, input{ font-size:16px !important; }
+  .inputRow{ flex-direction:column; align-items:stretch; gap:10px; }
+  .inputRow .mainInput{ min-height: 140px !important; width:100% !important; font-size:18px !important; }
+  #speakBtn, #micBtn{ width:100%; padding:12px 14px; border-radius:16px; }
+}
+
+/* Gym: darker place, but readable (no faint text) */
+#screenGym.card, #screenWorkshop.card{
+  background: rgba(10,14,24,.94) !important;
+  color: rgba(248,250,252,.98) !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  box-shadow: 0 22px 70px rgba(0,0,0,.45) !important;
+}
+#screenGym .muted, #screenWorkshop .muted{ color: rgba(226,232,240,.82) !important; }
+#screenGym .hint, #screenWorkshop .hint{ color: rgba(226,232,240,.85) !important; }
+#screenGym .input, #screenWorkshop .input{
+  background: rgba(255,255,255,.10) !important;
+  border-color: rgba(255,255,255,.18) !important;
+  color: rgba(248,250,252,.98) !important;
+}
+#screenGym .btn.ghost, #screenWorkshop .btn.ghost{
+  border-color: rgba(255,255,255,.22) !important;
+  color: rgba(248,250,252,.95) !important;
+}
+#screenGym .btn.primary, #screenWorkshop .btn.primary{
+  box-shadow: 0 14px 34px rgba(0,0,0,.35) !important;
+}
+
+/* Locked/readonly answer visual */
+.input.locked{
+  opacity:.88;
+  background: rgba(2,6,23,.06);
+}

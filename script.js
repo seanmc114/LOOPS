@@ -238,6 +238,23 @@ function detectTags(prompt, answer, lang, rubric){
     if(/\byo\s+gusta\b/.test(low)){ tags.push("word_order"); tags.push("verb_form"); examples.push("yo gusta → me gusta"); }
     if(/\bme\s+gusto\b/.test(low)){ tags.push("verb_form"); examples.push("me gusto → me gusta"); }
 
+    // Infinitive after pronoun (missing conjugation): "yo comer" → "yo como"
+    const infAfterPron = low.match(/\b(yo|tú|tu|el|él|ella|nosotros|vosotros|ellos|ellas)\s+(ser|estar|tener|hacer|ir|jugar|comer|hablar|vivir|leer|escribir|ver|salir|venir|poner|decir)\b/);
+    if(infAfterPron){
+      tags.push("verb_ending");
+      examples.push(`${infAfterPron[1]} ${infAfterPron[2]} → ${infAfterPron[1]} ${infAfterPron[2]}(conjugado)`);
+    }
+
+    // Very simple adjective agreement nudges
+    if(/\b(mi|tu|su)\s+(madre|hermana|amiga|profesora)\s+es\s+alto\b/.test(low)){
+      tags.push("agreement");
+      examples.push("alto → alta");
+    }
+    if(/\b(mi|tu|su)\s+(padre|hermano|amigo|profesor)\s+es\s+alta\b/.test(low)){
+      tags.push("agreement");
+      examples.push("alta → alto");
+    }
+
     // Subject + wrong 'to be' (very common early error)
     if(/\bmi\s+(madre|padre|amigo|amiga|profesor|profesora)\s+soy\b/.test(low)){
       tags.push("verb_form");
@@ -295,16 +312,39 @@ function focusLabel(tag, lang){
   if(tag==="verb_form") return "Verb forms";
   if(tag==="articles_gender") return "Articles & gender";
   if(tag==="word_order") return "Word order";
+  if(tag==="verb_ending") return "Verb endings";
+  if(tag==="agreement") return "Agreement";
   if(tag==="articles") return "Articles";
   if(tag==="missing_be") return "Missing ‘to be’";
   if(tag==="no_connector") return "Connectors";
   if(tag==="too_short") return "More detail";
   if(tag==="detail") return "More detail";
   return "One key fix";
+
+
+function tipForTags(tags, lang){
+  const t = Array.isArray(tags)?tags:[];
+  const has = (x)=> t.includes(x);
+  if(lang==="es"){
+    if(has("verb_form")) return "Fix the verb: soy/tengo/me gusta (this is where marks disappear).";
+    if(has("verb_ending")) return "Conjugate the verb (yo como / él come) — don’t leave it as an infinitive.";
+    if(has("word_order")) return "Word order: me gusta + infinitivo (not *yo gusta*).";
+    if(has("articles_gender")) return "Article + gender: el/la, un/una — match the noun.";
+    if(has("agreement")) return "Agreement: adjective ending must match (alto/alta).";
+    if(has("missing_be")) return "Add ‘to be’: es/está/soy… so the description works.";
+    if(has("no_connector")) return "Link ideas with one connector: y / pero / porque / además.";
+    if(has("spelling")) return "Fix spelling/accents — quick easy points.";
+    if(has("too_short")) return "Add one extra detail (place, activity, opinion, reason).";
+  }else{
+    if(has("too_short")) return "Add one extra detail (what/where/why).";
+  }
+  return "";
+}
+
 }
 
 function pickRoundFocus(items, lang, rubric){
-  // Count tags across items (prefer spelling/missing_be over detail)
+  // Count tags across items
   const counts = {};
   const examples = {};
   items.forEach(it=>{
@@ -315,7 +355,9 @@ function pickRoundFocus(items, lang, rubric){
     });
   });
 
-  const priority = ["spelling","verb_form","articles_gender","word_order","missing_be","articles","too_short","no_connector","detail"];
+  const priority = ["spelling","verb_form","verb_ending","agreement","articles_gender","word_order","missing_be","articles","too_short","no_connector","detail"];
+
+  // Choose best focus (needs a pattern if possible)
   let best = null;
   let bestCount = 0;
   priority.forEach(t=>{
@@ -323,69 +365,147 @@ function pickRoundFocus(items, lang, rubric){
     if(c>=2 && c>bestCount){ best=t; bestCount=c; }
   });
   if(!best){
-    // if no strong pattern, pick top anyway but don't nag
     best = priority.find(t=>(counts[t]||0)>0) || "detail";
     bestCount = counts[best]||0;
   }
 
+  // If the main issue is just "more detail", but we spotted a higher-value grammar pattern,
+  // focus on that instead (more useful than repeating "add detail" every time).
+  if(best==="too_short" || best==="detail"){
+    const strong = ["verb_form","verb_ending","word_order","articles_gender","agreement","missing_be"];
+    const pick = strong.find(t=>(counts[t]||0)>0);
+    if(pick){ best = pick; bestCount = counts[pick]||0; }
+  }
+  // Avoid focusing on connectors too early
+  if((rubric && !rubric.requireConnector) && best==="no_connector"){
+    best = (counts["verb_form"]||0)>0 ? "verb_form" : ((counts["articles_gender"]||0)>0 ? "articles_gender" : "detail");
+    bestCount = counts[best]||0;
+  }
+
+  // Top tags (for UI “error cogs”)
+  const top = priority
+    .filter(t=>(counts[t]||0)>0)
+    .map(t=>({tag:t, count:counts[t], label:focusLabel(t, lang)}))
+    .sort((a,b)=> (b.count-a.count) || (priority.indexOf(a.tag)-priority.indexOf(b.tag)))
+    .slice(0,4);
+
   const ex = (examples[best]||[]).slice(0,4);
-  return {tag:best, count:bestCount, label:focusLabel(best, lang), examples:ex};
+  return {tag:best, count:bestCount, label:focusLabel(best, lang), examples:ex, top, counts};
 }
 
+
 function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
-  const a = String(answer||"").trim();
-  if(!a) return "—";
+  const aRaw = String(answer||"").trim();
+  const pRaw = String(prompt||"").trim();
+
+  function modelFromPromptES(p, level){
+    const s = String(p||"").toLowerCase();
+    if(/town|pueblo|ciudad|barrio/.test(s)) return "Vivo en un pueblo pequeño y hay un parque donde quedo con mis amigos.";
+    if(/school|colegio|instituto|escuela/.test(s)) return "Mi colegio es grande y tiene un patio donde jugamos al fútbol.";
+    if(/classroom|clase/.test(s)) return "Mi clase es luminosa y hay pósters en las paredes.";
+    if(/friend|amig[oa]/.test(s)) return "Mi mejor amigo es simpático y le gusta el fútbol porque es muy activo.";
+    if(/family|familia/.test(s)) return "En mi familia somos cuatro y nos llevamos muy bien.";
+    if(/bedroom|habitaci/.test(s)) return "Mi habitación es pequeña pero cómoda y tengo un escritorio para estudiar.";
+    if(/person.*admire|admire|admiro/.test(s)) return "Admiro a mi madre porque es trabajadora y siempre me ayuda.";
+    if(/house|home|casa/.test(s)) return "Mi casa es bastante moderna y tiene una cocina grande.";
+    return "Es un lugar interesante y me gusta bastante.";
+  }
+
+  function pickDetailAddonES(p){
+    const s = String(p||"").toLowerCase();
+    const pick = (arr)=> arr[Math.floor(Math.random()*arr.length)];
+    if(/town|pueblo|ciudad|barrio/.test(s)) return pick([
+      "hay un cine y un centro comercial",
+      "se puede ir de compras",
+      "hay un polideportivo para hacer deporte",
+      "hay parques y cafeterías",
+      "los fines de semana salgo con mis amigos"
+    ]);
+    if(/school|colegio|instituto|escuela|classroom|clase/.test(s)) return pick([
+      "hay un patio grande",
+      "tengo profesores simpáticos",
+      "las clases son interesantes",
+      "hay una biblioteca con muchos libros",
+      "hay muchas actividades después de clase"
+    ]);
+    if(/bedroom|habitaci/.test(s)) return pick([
+      "tengo un armario grande",
+      "hay una ventana con vistas",
+      "tengo pósters en la pared",
+      "hay una cama cómoda",
+      "tengo un escritorio para estudiar"
+    ]);
+    if(/friend|amig[oa]|family|familia|person.*admire|admire|admiro/.test(s)) return pick([
+      "es muy simpático",
+      "es trabajador y responsable",
+      "tiene el pelo corto y los ojos marrones",
+      "me ayuda cuando lo necesito",
+      "siempre dice la verdad"
+    ]);
+    if(/house|home|casa/.test(s)) return pick([
+      "hay un jardín pequeño",
+      "tiene dos baños",
+      "la sala de estar es muy luminosa",
+      "hay una cocina grande",
+      "vivo cerca del centro"
+    ]);
+    return pick(["es bastante moderno", "me gusta mucho", "es muy cómodo", "es interesante para mí"]);
+  }
+
+  // If blank or unusable, generate a model from the prompt so the learner sees what “good” looks like.
+  if(!aRaw || isBadGymSeed(aRaw)) {
+    return (lang==="es") ? modelFromPromptES(pRaw, Number(state.level)||1) : "—";
+  }
+
+  const a = aRaw;
 
   if(lang==="es"){
     const fx = wordFixesES(a);
+
     // If the focus is spelling and there are changes, return corrected version (no fluff)
     if(focusTag==="spelling" && fx.changes.length){
       return fx.fixed;
     }
-    // If missing_be, try a gentle fix: prepend "Es ..." when starts with adjective or noun phrase
+
+    // Verb/to-be missing focus: nudge into a complete, correct structure
     if(focusTag==="missing_be"){
       const low = a.toLowerCase();
-      if(!/\b(es|está|son|soy|eres|somos)\b/.test(low)){
-        // simple: if starts with "mi ..." keep; else start with "Es ..."
+      if(!/\b(es|está|son|soy|eres|somos|estoy|estás|están)\b/.test(low)){
         const fixed = low.startsWith("mi ") ? (a[0].toUpperCase()+a.slice(1)) : ("Es " + a);
         return wordFixesES(fixed).fixed;
       }
     }
-    // Detail focus: add ONE extra detail, varied
+
+    // Detail focus: add ONE extra detail, contextual to prompt
     if(focusTag==="too_short" || focusTag==="detail"){
       const starters = ["También", "Además", "Y", "Porque"];
-      const addOns = [
-        "tengo un armario.",
-        "hay una ventana.",
-        "es bastante moderno.",
-        "me gusta mucho.",
-        "es muy cómodo.",
-        "tiene muchos libros.",
-        "hay un patio grande.",
-        "es interesante para mí."
-      ];
       const st = starters[Math.floor(Math.random()*starters.length)];
-      const ad = addOns[Math.floor(Math.random()*addOns.length)];
+      const ad = pickDetailAddonES(pRaw);
+
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
-      return `${base} ${st} ${ad[0].toLowerCase()+ad.slice(1)}`;
+      // If base is very short, use a prompt-based model as the base.
+      const baseWc = countWords(base);
+      const seed = (baseWc < Math.max(4, (rubric?.minWords||6)-2)) ? modelFromPromptES(pRaw, Number(state.level)||1).replace(/[.!?]+$/,".") : base;
+
+      return `${seed} ${st} ${ad[0].toLowerCase()+ad.slice(1)}.`;
     }
-    // Connector focus
+
+    // Connector focus: add a connector appropriately
     if(focusTag==="no_connector"){
       const base = wordFixesES(a).fixed.replace(/[.!?]+$/,".");
-      const conns = ["porque","pero","y","además"];
+      const conns = ["porque","pero","y","además","entonces"];
       const c = conns[Math.floor(Math.random()*conns.length)];
-      const tail = (c==="porque") ? "es importante." : "es interesante.";
+      const tail = (c==="porque") ? "me gusta." : "es interesante.";
       return `${base} ${c} ${tail}`;
     }
 
     // Default: corrected text
-    return wordFixesES(a).fixed;
+    return fx.fixed;
   }
 
-  // Non-ES fallback: just tidy + add one simple detail sometimes
-  const base = a[0]===a[0].toLowerCase()? (a[0].toUpperCase()+a.slice(1)) : a;
-  return /[.!?]$/.test(base) ? base : (base+".");
+  return a;
 }
+
 
   const $ = (id)=> document.getElementById(id);
 
@@ -731,6 +851,8 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     prompts: [],
     idx: 0,
     answers: [],
+    maxIdxReached: 0,
+    locked: [],
     startedAt: 0,
     timer: null,
     elapsedMs: 0,
@@ -937,14 +1059,17 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return a;
   }
 
-  function isConnectorPrompt(p){
+    function isConnectorPrompt(p){
     if(!p) return false;
     const badge = String(p.badge||"").toLowerCase();
-    if(badge==="structure" || badge==="connector" || badge==="connectors" || badge==="link") return true;
+    // Only treat explicit connector/link prompts as connector prompts.
+    if(badge==="connector" || badge==="connectors" || badge==="link") return true;
+
     const txt = String(p.text||"").toLowerCase();
-    // Common connector cues across languages
-    return /(because|so that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in addition|on the other hand)/.test(txt);
+    // Connector cue words (English prompt text)
+    return /\b(because|so that|however|but|then|after|before|when|while|since|first|second|finally|also|in addition|on the other hand)\b/.test(txt);
   }
+
 
   function connectorCapForLevel(level){
     const lvl = Number(level)||1;
@@ -954,43 +1079,51 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return 5;
   }
 
-  function samplePrompts(themeId){
+    function samplePrompts(themeId){
     const t = THEME_BY_ID[themeId] || THEMES[0];
     const pool = PROMPT_BANK[t.idx] || PROMPT_BANK[0] || [];
     const lvl = Number(state.level)||1;
-
-    // Split connector-ish prompts so early levels don't become "connector-only"
-    const connectors = [];
-    const others = [];
-    for(const p of shuffle(pool)){
-      (isConnectorPrompt(p) ? connectors : others).push(p);
-    }
-
     const cap = connectorCapForLevel(lvl);
+
     const out = [];
+    const used = new Set();
+    let connCount = 0;
 
-    // Take up to cap connectors first (if available), then fill with others.
-    out.push(...connectors.slice(0, Math.min(cap, connectors.length)));
-    const remaining = PROMPTS_PER_ROUND - out.length;
-    out.push(...others.slice(0, Math.min(remaining, others.length)));
+    // Shuffle once and pick while respecting MAX connector cap.
+    for(const p of shuffle(pool)){
+      const key = String(p.text||"").trim().toLowerCase();
+      if(!key || used.has(key)) continue;
 
-    // If still short, top up from remaining connectors/others
-    if(out.length < PROMPTS_PER_ROUND){
-      const need = PROMPTS_PER_ROUND - out.length;
-      out.push(...connectors.slice(out.filter(isConnectorPrompt).length, out.filter(isConnectorPrompt).length + need));
+      const isConn = isConnectorPrompt(p);
+      if(isConn && connCount >= cap) continue;
+
+      out.push(p);
+      used.add(key);
+      if(isConn) connCount++;
+      if(out.length >= PROMPTS_PER_ROUND) break;
     }
+
+    // If we still don't have 10 (small pool), top up with any non-duplicates (ignore cap as last resort)
     if(out.length < PROMPTS_PER_ROUND){
-      const need = PROMPTS_PER_ROUND - out.length;
-      out.push(...others.slice(out.filter(p=>!isConnectorPrompt(p)).length, out.filter(p=>!isConnectorPrompt(p)).length + need));
+      for(const p of shuffle(pool)){
+        const key = String(p.text||"").trim().toLowerCase();
+        if(!key || used.has(key)) continue;
+        out.push(p);
+        used.add(key);
+        if(out.length >= PROMPTS_PER_ROUND) break;
+      }
     }
 
-    return shuffle(out).slice(0, PROMPTS_PER_ROUND);
+    return out.slice(0, PROMPTS_PER_ROUND);
   }
+
 
   function startRound(){
     state.prompts = samplePrompts(state.themeId);
     state.idx = 0;
     state.answers = Array(PROMPTS_PER_ROUND).fill("");
+    state.locked = Array(PROMPTS_PER_ROUND).fill(false);
+    state.maxIdxReached = 1;
     state.startedAt = Date.now();
     state.isMarking = false;
     state.roundFinished = false;
@@ -1064,26 +1197,53 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
     const input = wrap.querySelector("#mainInput");
     input.value = state.answers[state.idx] || "";
-    input.addEventListener("input", ()=>{ state.answers[state.idx] = input.value; });
-    input.addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); handleNext(); } });
+
+    const isLocked = !!state.locked[state.idx];
+    if(isLocked){
+      input.readOnly = true;
+      input.classList.add("locked");
+    }else{
+      input.addEventListener("input", ()=>{ state.answers[state.idx] = input.value; });
+      input.addEventListener("keydown", (e)=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); handleNext(); } });
+    }
 
     wrap.querySelector("#speakBtn").addEventListener("click", ()=> speak(p.text));
-    wrap.querySelector("#micBtn").addEventListener("click", ()=> startDictation((t)=>{ input.value=t; state.answers[state.idx]=t; }));
-    input.focus();
+    wrap.querySelector("#micBtn").addEventListener("click", ()=> startDictation((t)=>{ if(!isLocked){ input.value=t; state.answers[state.idx]=t; } }));
+    // focus only when editable (avoid mobile scroll jump when reviewing)
+    if(!isLocked) input.focus();
   }
 
   function handlePrev(){ if(state.idx===0) return; state.idx--; buildPromptUI(); updateGameHeader(); }
-  function handleNext(){ if(state.idx < PROMPTS_PER_ROUND-1){ state.idx++; buildPromptUI(); updateGameHeader(); return; } finishRound(); }
+  function handleNext(){
+    // lock the current answer once the learner moves on
+    state.locked[state.idx] = true;
+    if(state.idx < PROMPTS_PER_ROUND-1){
+      state.idx++;
+      state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
+      buildPromptUI();
+      updateGameHeader();
+      return;
+    }
+    finishRound();
+  }
 
   // Marking helpers
   function computeScoreSec(timeMs, wrong){ return (timeMs/1000) + wrong*PENALTY_SEC; }
-  function levelRubric(level){ const lvl=Number(level)||1; const minWords=Math.min(16, 3 + Math.floor(lvl/2)); const minChars=Math.min(220, 14 + lvl*6); const requireConnector=lvl>=4; const requireBe=lvl>=2; return {minWords,minChars,requireConnector,requireBe}; }
+  function levelRubric(level){
+    const lvl = Math.min(10, Math.max(1, Number(level)||1));
+    const minWordsByLevel = [0,4,5,6,7,8,9,10,11,12,13];
+    const minWords = minWordsByLevel[lvl] || 6;
+    const minChars = Math.min(260, 20 + lvl*14);
+    const requireConnector = (lvl>=6);
+    const requireBe = (lvl>=2);
+    return {minWords,minChars,requireConnector,requireBe};
+  }
   const ES_FIX = {"espanol":"español","tambien":"también","facil":"fácil","dificil":"difícil","futbol":"fútbol","musica":"música","también":"también"};
   function tidySuggestion(raw){ let s=String(raw||"").trim(); if(!s) return ""; s=s.replace(/\s+/g," ").trim(); s=s.charAt(0).toUpperCase()+s.slice(1); if(state.lang==="es"){ s=s.split(/(\b)/).map(tok=>{ const low=tok.toLowerCase(); return ES_FIX[low] ? ES_FIX[low] : tok; }).join(""); s=s.replace(/\bde\s+español\b/i, "de español"); } if(!/[.!?]$/.test(s)) s += "."; return s; }
   function countWords(s){ return String(s||"").trim().split(/\s+/).filter(Boolean).length; }
   function connectorPresent(s){ const x=norm(s); return /(\by\b|\bpero\b|\bporque\b|\bademas\b|\bentonces\b|\btambien\b|\bya\s+que\b)/.test(x) || /(\bet\b|\bmais\b|\bparce\s+que\b|\bdonc\b)/.test(x) || /(\bund\b|\baber\b|\bweil\b|\bdeshalb\b)/.test(x); }
   function beVerbPresent(s){ const x=norm(s); if(state.lang==="es") return /(\bes\b|\bson\b|\bestoy\b|\bestá\b|\bsoy\b)/.test(x); if(state.lang==="fr") return /(\bc\s*est\b|\best\b|\bsont\b|\bsuis\b|\bai\b|\bas\b|\ba\b|\bont\b)/.test(x); if(state.lang==="de") return /(\bist\b|\bsind\b|\bbin\b|\bseid\b|\bhabe\b|\bhat\b|\bhaben\b)/.test(x); return false; }
-  function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10) return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
+  function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10 && t!=="—." && t!=="—") return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
 
   async function markWithAI(payload){
@@ -1147,7 +1307,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       else {
         const w=countWords(ans);
         if(w < rubric.minWords || ans.length < rubric.minChars){ ok=false; reason="Too short"; }
-        if(ok && rubric.requireConnector && (p.badge==="structure" || /because|why|opinion|reasons/i.test(p.text))){ if(!connectorPresent(ans)){ ok=false; reason="Missing connector"; } }
+        if(ok && rubric.requireConnector && (/because|why|opinion|reasons|first|then|after|before|during|sequence|story/i.test(p.text))){ if(!connectorPresent(ans)){ ok=false; reason="Missing connector"; } }
         if(ok && rubric.requireBe && p.badge==="ser"){ if(!beVerbPresent(ans)){ ok=false; reason="Missing to-be"; } }
       }
 
@@ -1161,7 +1321,8 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       if(!ok){ wrong++; reasonsCount[reason] = (reasonsCount[reason]||0)+1; }
 
       const det = detectTags(p.text, ans||"", state.lang, rubric);
-      items.push({ n:i+1, prompt:p.text, answer:ans||"—", ok, reason, suggestion, tip, why, tags: det.tags, examples: det.examples });
+      const t2 = tipForTags(det.tags, state.lang) || tip;
+      items.push({ n:i+1, prompt:p.text, answer:ans||"—", ok, reason, suggestion, tip: t2, why, tags: det.tags, examples: det.examples });
     }
 
     const scoreSec = computeScoreSec(state.elapsedMs, wrong);
@@ -1170,8 +1331,10 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
 
   // Coach focus (one thing only)
   const focus = pickRoundFocus(items, state.lang, rubric);
-  state.mark = { items, wrong, scoreSec, passed, focus: `${focus.label} (${focus.count})`, focusTag: focus.tag, focusLabel: focus.label, focusCount: focus.count, focusExamples: focus.examples };
+  state.mark = { items, wrong, scoreSec, passed, focus: `${focus.label} (${focus.count})`, focusTag: focus.tag, focusLabel: focus.label, focusCount: focus.count, focusExamples: focus.examples, topTags: focus.top, tagCounts: focus.counts };
   state.gymRequired = (wrong >= 3);
+  // Make feedback a cornerstone: show it by default when anything is wrong
+  state.showCorrections = (wrong > 0);
 
   incRounds();
   savePBIfBetter(state.themeId, state.level, state.mode, state.lang, scoreSec, wrong, state.elapsedMs);
@@ -1361,6 +1524,9 @@ function renderResults(){
           `;
           el.feedbackList.appendChild(card);
         });
+
+        // Auto-scroll to feedback so it’s not hidden (especially on mobile)
+        setTimeout(()=>{ try{ el.feedbackList.scrollIntoView({block:"start"}); }catch(_){ } }, 60);
       }
     }
 
@@ -1376,14 +1542,27 @@ function renderResults(){
     if(el.wsMeterFill) el.wsMeterFill.style.width = `${pct}%`;
     if(el.wsMeterText) el.wsMeterText.textContent = `${pct}%`;
   }
-  function updateGymExit(){ 
+    function updateGymExit(){
     if(!el.wsExit) return;
+    const required = !!state.workshop.required;
     const t = state.workshop.gate.target;
     const left = Math.max(0, t - state.workshop.stats.streak);
     const unlocked = left===0;
-    el.wsExit.textContent = unlocked ? "Exit Gym ✓" : `Exit Gym 🔒 (need ${left} more)`;
+
+    if(!required){
+      // Optional training: always allow exit. Give a little reward moment if they clear the reps.
+      el.wsExit.disabled = false;
+      el.wsExit.textContent = state.workshop.cleared ? "Back to Results ✓" : "Exit Gym";
+      el.wsExit.classList.toggle("wsExitReady", !!state.workshop.cleared);
+      return;
+    }
+
+    // Required training (jeopardy): must clear reps before leaving
+    el.wsExit.textContent = unlocked ? "Next Level ➜" : `Exit Gym 🔒 (need ${left} more)`;
     el.wsExit.disabled = !unlocked;
+    el.wsExit.classList.toggle("wsExitReady", unlocked);
   }
+
 
   
   
@@ -1392,6 +1571,8 @@ function gymFocusType(){
   const tag = state.workshop.focusTag || "";
   if(tag==="spelling") return "spelling";
   if(tag==="verb_form") return "verbs";
+  if(tag==="verb_ending") return "verbs";
+  if(tag==="agreement") return "gender";
   if(tag==="articles_gender" || tag==="articles") return "gender";
   if(tag==="word_order") return "order";
   if(tag==="missing_be") return "be";
@@ -1485,8 +1666,15 @@ function openGymFromResults(){
     const lines = [
       "Main focus: " + focusLabel,
       "Goal: " + state.workshop.gate.target + " correct in a row",
-      state.gymRequired ? "Jeopardy: no exit until cleared" : "Quick reps, then leave"
+      state.gymRequired ? "Coach rule: clear the reps to move on." : "Optional: do a few reps, then leave"
     ];
+
+    // Show other common “cogs” from this round so learners know what else matters.
+    const top = Array.isArray(state.mark.topTags) ? state.mark.topTags : [];
+    const also = top.filter(t=>t && t.tag && t.tag!==focusTag).slice(0,3).map(t=>t.label);
+    if(also.length){
+      lines.push("Also watch: " + also.join(" · "));
+    }
     lines.forEach(t=>{ const d=document.createElement("div"); d.className="wsCog"; d.textContent=t; el.wsCogs.appendChild(d); });
   }
   if(el.wsGateType) el.wsGateType.textContent = "Streak";
@@ -1698,8 +1886,12 @@ if(type==="detail" || type==="upgrade"){
         const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:""});
         const ptxt = String(ref.prompt||"").trim();
         const ans = String(ref.answer||"").trim();
-        const model = String(ref.suggestion||"").trim() || pickModelAnswer({text: ptxt || "Describe something."}, ans || "");
-        const base = (!isBadGymSeed(ans)) ? tidySuggestion(ans) : (model.split(".")[0] + ".");
+        let model = String(ref.suggestion||"").trim() || pickModelAnswer({text: ptxt || "Describe something."}, ans || "");
+        // Never allow placeholder / fragment "—" models in the Gym.
+        if(!model || /^—/.test(model) || isBadGymSeed(model)){
+          model = pickModelAnswer({text: ptxt || "Describe something."}, "");
+        }
+        const base = (!isBadGymSeed(ans)) ? tidySuggestion(ans) : (String(model).split(".")[0] + ".");
         const stronger = tidySuggestion(model);
 
         if(el.wsPrompt){
@@ -1802,7 +1994,8 @@ if(type==="connector"){
       const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:"", suggestion:""});
       const baseAns = String(ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
-      const model = String(ref.suggestion||"").trim() || pickModelAnswer({text: basePrompt || "Describe something."}, baseAns || "");
+      let model = String(ref.suggestion||"").trim();
+      if(!model || isBadGymSeed(model)) model = pickModelAnswer({text: basePrompt || "Describe something."}, baseAns || "");
 
       if(el.wsPrompt){
         if(!isBadGymSeed(baseAns)){
@@ -1952,7 +2145,22 @@ if(el.rewardOk){
     if(el.homeBtn) el.homeBtn.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
     if(el.wsBackResults) el.wsBackResults.addEventListener("click", ()=> show("results"));
     if(el.wsHome) el.wsHome.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
-    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{ if(el.wsExit.disabled) return; show("home"); renderThemeTiles(); });
+    if(el.wsExit) el.wsExit.addEventListener("click", ()=>{
+      if(el.wsExit.disabled) return;
+
+      // If Gym was required, clearing it counts as a “training pass” and moves you forward.
+      if(state.workshop.required){
+        try{ setStar(state.themeId, state.level, true); }catch(_){ }
+        const next = Math.min(10, (Number(state.level)||1) + 1);
+        state.level = next;
+        toast("Coach: Good. Next level.");
+        startRound();
+        return;
+      }
+
+      show("home");
+      renderThemeTiles();
+    });
     if(el.wsSubmit) el.wsSubmit.addEventListener("click", handleGymSubmit);
     if(el.wsInput) el.wsInput.addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ e.preventDefault(); handleGymSubmit(); } });
     if(el.wsOverride) el.wsOverride.addEventListener("click", ()=>{ if(el.wsExit){ el.wsExit.disabled=false; el.wsExit.textContent="Exit Gym ✓"; } toast("Teacher override used"); });
