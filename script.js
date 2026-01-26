@@ -145,7 +145,50 @@ function awardForPass(scoreSec, wrong, targetSec){
 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
+
+function ensureCoachModal(){
+  // Some deployments may use an older index.html without the coach modal.
+  // Create it on the fly so the coach is ALWAYS visible.
+  if(document.getElementById("coachModal")) return;
+  const wrap = document.createElement("div");
+  wrap.className = "modal hidden";
+  wrap.id = "coachModal";
+  wrap.setAttribute("role","dialog");
+  wrap.setAttribute("aria-modal","true");
+  wrap.setAttribute("aria-label","Coach");
+  wrap.innerHTML = `
+    <div class="modalCard">
+      <div class="modalHead">
+        <div class="coachAvatar" id="coachAvatar">🧥⚽</div>
+        <div class="coachHeadText">
+          <div class="coachTitle" id="coachTitle">Coach</div>
+          <div class="coachSub" id="coachSub"></div>
+        </div>
+      </div>
+      <div class="modalBody" id="coachBody"></div>
+      <div class="modalBtns">
+        <button class="btn primary" id="coachPrimary" type="button">Continue</button>
+        <button class="btn ghost" id="coachSecondary" type="button">Gym</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+}
+
 function showCoachModal(opts){
+  ensureCoachModal();
+  // refresh refs in case modal was created dynamically
+  if(!el.coachModal){
+    try{
+      el.coachModal = $("coachModal");
+      el.coachAvatar = $("coachAvatar");
+      el.coachTitle = $("coachTitle");
+      el.coachSub = $("coachSub");
+      el.coachBody = $("coachBody");
+      el.coachPrimary = $("coachPrimary");
+      el.coachSecondary = $("coachSecondary");
+    }catch(_){ }
+  }
   if(!el.coachModal) return;
   if(el.coachAvatar){
     if(opts.avatarHtml) el.coachAvatar.innerHTML = opts.avatarHtml;
@@ -1538,7 +1581,7 @@ if(aiCorrection && String(aiCorrection).trim()){
     }).catch(e=>{
       state.ai.ok = false;
       state.ai.error = String(e && e.message ? e.message : e);
-      if(el.aiStatusText) el.aiStatusText.textContent = "Coach was slow/offline — using local marking.";
+      if(el.aiStatusText) el.aiStatusText.textContent = "";
     });
 
     const items=[];
@@ -1622,7 +1665,7 @@ if(aiCorrection && String(aiCorrection).trim()){
   // Keep corrections visible by default when mistakes exist
   renderResults();
   show("results");
-  presentCoachModal();
+  setTimeout(()=>{ try{ presentCoachModal(); }catch(e){ console.error(e); } }, 60);
     }catch(err){
       console.error(err);
       // Fallback: still produce results so the player can always finish the round.
@@ -1659,7 +1702,7 @@ if(aiCorrection && String(aiCorrection).trim()){
       state.isMarking = false;
       // Ensure results are visible if we have a mark payload
       try{ if(state.mark){ renderResults(); show("results"); 
-      presentCoachModal();
+      setTimeout(()=>{ try{ presentCoachModal(); }catch(e){ console.error(e); } }, 60);
 } }catch(_){ }
       setNavLocked(false);
     }
@@ -1809,7 +1852,12 @@ function renderResults(){
     if(el.scoreOut) el.scoreOut.textContent = `${m.scoreSec.toFixed(1)}s`;
     if(el.targetOut) el.targetOut.textContent = `${unlockTargetForLevel(state.level)}s + ≤2 wrong`;
 
-    if(el.coachFocus) el.coachFocus.textContent = m.passed ? "✅ Passed — next level unlocked (in this theme)." : `Coach focus: ${m.focus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
+    if(el.coachFocus){
+      const safeFocus = String(m.focus||m.focusLabel||"One clean improvement").trim();
+      el.coachFocus.textContent = m.passed
+        ? "✅ Passed — next level unlocked (in this theme)."
+        : `Coach focus: ${safeFocus}. ${state.gymRequired ? "Gym required (3+ wrong)." : "Try again."}`;
+    }
 
     if(el.coachVerdict){
       const nm = getPlayerName() || 'mate';
@@ -2151,7 +2199,21 @@ state.workshop.recentRepSigs = [];
     state.workshop.currentItem = pickGymItem(state.workshop.activeTag || state.workshop.focusTag);
 
         state.workshop.activeTag = pickGymRepTag();
-    const type = gymFocusType();
+    let type = gymFocusType();
+    // If we keep serving the same drill type, rotate to another available tag/type for variety.
+    try{
+      const lastType = state.workshop.lastType || "";
+      if(lastType && type===lastType){
+        const tags = [state.workshop.focusTag].concat(state.workshop.altTags||[]).filter(Boolean);
+        const uniqTags = tags.filter((v,i,a)=>a.indexOf(v)===i);
+        for(const t of uniqTags){
+          state.workshop.activeTag = t;
+          const tt = gymFocusType();
+          if(tt && tt!==lastType){ type = tt; break; }
+        }
+      }
+      state.workshop.lastType = type;
+    }catch(_){}
     let variant = Math.random() < 0.55 ? "choice" : "type";
     if(state.workshop.lastVariant && state.workshop.lastVariant===variant) variant = (variant==="choice"?"type":"choice");
     state.workshop.lastVariant = variant;
@@ -2466,6 +2528,14 @@ if(type==="connector"){
       const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:"", suggestion:""});
       const baseAns = String(ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
+      const fallbackPrompt = (function(){
+        try{
+          const themeIdx = (THEME_BY_ID[state.themeId] ? THEME_BY_ID[state.themeId].idx : 0);
+          const bank = Array.isArray(PROMPT_BANK[themeIdx]) ? PROMPT_BANK[themeIdx] : [];
+          const pr = bank.find(x=>x && x.text && String(x.text).trim());
+          return pr ? String(pr.text).trim() : "";
+        }catch(_){ return ""; }
+      })();
       let model = String(ref.suggestion||"").trim();
       if(!model || isBadGymSeed(model)) model = pickModelAnswer({text: basePrompt || "Describe something."});
 
@@ -2481,9 +2551,9 @@ if(type==="connector"){
         }else{
           el.wsPrompt.textContent =
             (L==="es") ? `Write a NEW answer with ONE extra detail for:
-"${basePrompt||"the prompt"}"` :
+"${basePrompt||fallbackPrompt||"this topic"}"` :
             (L==="fr") ? `Écris une NOUVELLE réponse avec UN détail en plus pour :
-"${basePrompt||"le prompt"}"` :
+"${basePrompt||fallbackPrompt||"ce sujet"}"` :
                          `Schreibe eine NEUE Antwort mit EINEM Detail mehr für:
 "${basePrompt||"die Aufgabe"}"`;
         }
