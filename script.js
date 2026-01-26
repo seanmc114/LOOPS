@@ -21,6 +21,28 @@ const COACH = {
   // A loose, football‑manager caricature: stern, funny, obsessed with standards.
   name: "Coach El Mister",
   avatar: "🧥⚽",
+  // Simple original SVG (inspired by a touchline manager vibe, not a real person).
+  avatarHtml: `
+    <svg viewBox="0 0 96 96" width="56" height="56" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="rgba(0,0,0,.9)"/>
+          <stop offset="1" stop-color="rgba(0,0,0,.6)"/>
+        </linearGradient>
+      </defs>
+      <circle cx="48" cy="48" r="44" fill="rgba(0,0,0,.06)" stroke="rgba(0,0,0,.08)"/>
+      <circle cx="48" cy="38" r="16" fill="rgba(0,0,0,.12)"/>
+      <path d="M26 78c4-16 16-22 22-22s18 6 22 22" fill="url(#g)" opacity=".9"/>
+      <path d="M36 58c4 6 20 6 24 0" fill="rgba(255,255,255,.9)" opacity=".35"/>
+      <path d="M30 68c8 4 28 4 36 0" fill="none" stroke="rgba(255,255,255,.65)" stroke-width="3" stroke-linecap="round" opacity=".25"/>
+      <path d="M34 40c3-6 25-6 28 0" fill="none" stroke="rgba(0,0,0,.45)" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="42" cy="36" r="2.4" fill="rgba(0,0,0,.55)"/>
+      <circle cx="54" cy="36" r="2.4" fill="rgba(0,0,0,.55)"/>
+      <path d="M44 44c3 2 5 2 8 0" fill="none" stroke="rgba(0,0,0,.45)" stroke-width="3" stroke-linecap="round"/>
+      <path d="M34 60l-12 8" stroke="rgba(0,0,0,.45)" stroke-width="6" stroke-linecap="round"/>
+      <path d="M62 60l12 8" stroke="rgba(0,0,0,.45)" stroke-width="6" stroke-linecap="round"/>
+    </svg>
+  `,
   praise: [
     "Bien. That’s a proper performance.",
     "Good. You did the work — now keep it.",
@@ -123,9 +145,22 @@ function awardForPass(scoreSec, wrong, targetSec){
 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
 
+function pickAvoid(options, recent, maxLookback=3){
+  const r = (recent||[]).slice(-maxLookback);
+  const filtered = options.filter(o=>!r.includes(o));
+  return pick(filtered.length ? filtered : options);
+}
+
 function showCoachModal(opts){
   if(!el.coachModal) return;
-  if(el.coachAvatar) el.coachAvatar.textContent = opts.avatar || COACH.avatar;
+  if(el.coachAvatar){
+    // Allow SVG/HTML avatars for a "bigger" coach presence.
+    if(opts.avatarHtml || COACH.avatarHtml){
+      el.coachAvatar.innerHTML = opts.avatarHtml || COACH.avatarHtml;
+    }else{
+      el.coachAvatar.textContent = opts.avatar || COACH.avatar;
+    }
+  }
   if(el.coachTitle) el.coachTitle.textContent = opts.title || COACH.name;
   if(el.coachSub) el.coachSub.textContent = opts.sub || "";
   if(el.coachBody) el.coachBody.innerHTML = opts.html || "";
@@ -459,6 +494,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     wsMeterFill: $("wsMeterFill"),
     wsMeterText: $("wsMeterText"),
     wsPrompt: $("wsPrompt"),
+    wsContext: $("wsContext"),
     wsChoices: $("wsChoices"),
     wsInputRow: $("wsInputRow"),
     wsInput: $("wsInput"),
@@ -942,8 +978,9 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const badge = String(p.badge||"").toLowerCase();
     if(badge==="structure" || badge==="connector" || badge==="connectors" || badge==="link") return true;
     const txt = String(p.text||"").toLowerCase();
-    // Common connector cues across languages
-    return /(because|so that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in addition|on the other hand)/.test(txt);
+    // Common connector cues across languages.
+    // (Use real word-boundaries; some editors accidentally inject control characters.)
+    return /\b(because|so\s+that|so|however|but|and|then|after|before|when|while|since|first|second|finally|also|in\s+addition|on\s+the\s+other\s+hand)\b/.test(txt);
   }
 
   function connectorCapForLevel(level){
@@ -974,16 +1011,31 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const remaining = PROMPTS_PER_ROUND - out.length;
     out.push(...others.slice(0, Math.min(remaining, others.length)));
 
-    // If still short, top up from remaining connectors/others
-    if(out.length < PROMPTS_PER_ROUND){
-      const need = PROMPTS_PER_ROUND - out.length;
-      out.push(...connectors.slice(out.filter(isConnectorPrompt).length, out.filter(isConnectorPrompt).length + need));
+    // Strict connector cap: if we don't have enough non-connector prompts,
+    // we prefer re-using "others" rather than flooding the round with connectors.
+    const usedConn = out.filter(isConnectorPrompt).length;
+    while(out.length < PROMPTS_PER_ROUND && others.length){
+      out.push(others[out.length % others.length]);
     }
-    if(out.length < PROMPTS_PER_ROUND){
-      const need = PROMPTS_PER_ROUND - out.length;
-      out.push(...others.slice(out.filter(p=>!isConnectorPrompt(p)).length, out.filter(p=>!isConnectorPrompt(p)).length + need));
+    // Last resort only (extremely connector-heavy pool): allow additional connectors.
+    while(out.length < PROMPTS_PER_ROUND && connectors.length){
+      out.push(connectors[out.length % connectors.length]);
     }
 
+    // Safety: never exceed cap unless we truly have no other content.
+    if(others.length){
+      const capped = [];
+      let c=0;
+      for(const p of shuffle(out)){
+        if(isConnectorPrompt(p)){
+          if(c < cap){ capped.push(p); c++; }
+        }else{
+          capped.push(p);
+        }
+        if(capped.length===PROMPTS_PER_ROUND) break;
+      }
+      return shuffle(capped).slice(0, PROMPTS_PER_ROUND);
+    }
     return shuffle(out).slice(0, PROMPTS_PER_ROUND);
   }
 
@@ -1474,17 +1526,23 @@ function openGymFromResults(){
   const focusTag = state.mark.focusTag || "detail";
   const focusLabel = state.mark.focusLabel || "Detail";
 
-  const refItem =
-       (state.mark.items||[]).find(it=> (it.tags||[]).includes(focusTag) && String(it.answer||"").trim())
-    || (state.mark.items||[]).find(it=>!it.ok && String(it.answer||"").trim())
-    || (state.mark.items||[]).find(it=> String(it.answer||"").trim())
-    || {prompt:"", answer:""};
+  // Pick a concrete example from the just-finished round.
+  // If the student's answer is a fragment (e.g. "Antes era"), we still keep it,
+  // but we ALWAYS show the full prompt + Coach model so the drill makes sense.
+  const items = (state.mark.items||[]).slice();
+  const hasText = (it)=> String(it.answer||"").trim().length>0;
+  const byTag = items.find(it=> (it.tags||[]).includes(focusTag) && hasText(it));
+  const firstWrong = items.find(it=> !it.ok && hasText(it));
+  const any = items.find(it=> hasText(it));
+  const refItem = byTag || firstWrong || any || {n:0, prompt:"", answer:"", suggestion:""};
 
   state.workshop.required = state.gymRequired;
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
   state.workshop.refItem = refItem;
+  state.workshop.refText = (countWords(refItem.answer) >= 3 ? String(refItem.answer||"") : String(refItem.suggestion||refItem.answer||""));
+  state.workshop.recentSubs = [];
   state.workshop.stats = {correct:0, attempts:0, streak:0};
   state.workshop.gate = { type:"streak", target: gymTarget(state.level, state.mark.wrong) };
 
@@ -1502,9 +1560,28 @@ function openGymFromResults(){
   }
   if(el.wsGateType) el.wsGateType.textContent = "Streak";
   if(el.wsGateTarget) el.wsGateTarget.textContent = `${state.workshop.gate.target} correct in a row`;
+  renderGymContext();
   updateGymMeter(); updateGymExit();
   nextGymDrill();
   show("gym");
+}
+
+function renderGymContext(){
+  if(!el.wsContext) return;
+  const it = state.workshop.refItem || {};
+  const prompt = String(it.prompt||"").trim();
+  const ans = String(it.answer||"").trim();
+  const model = String(it.suggestion||"").trim();
+  if(!prompt && !ans && !model){ el.wsContext.classList.add("hidden"); el.wsContext.innerHTML=""; return; }
+
+  const frag = ans && countWords(ans) < 3;
+  const dm = diffMarkup(ans||"—", model||"—", !!it.ok);
+  el.wsContext.classList.remove("hidden");
+  el.wsContext.innerHTML = `
+    <div class="wsCtxRow"><div class="wsCtxK">Prompt</div><div class="wsCtxV">${escapeHtml(prompt||"—")}</div></div>
+    <div class="wsCtxRow"><div class="wsCtxK">${frag?"You wrote (fragment)":"You wrote"}</div><div class="wsCtxV">${dm.answerHtml}</div></div>
+    <div class="wsCtxRow"><div class="wsCtxK">Coach model</div><div class="wsCtxV">${dm.modelHtml}</div></div>
+  `;
 }
 
 
@@ -1520,7 +1597,30 @@ function openGymFromResults(){
 
   function nextGymDrill(){
     const type = gymFocusType();
-    const variant = Math.random() < 0.55 ? "choice" : "type";
+    let variant = Math.random() < 0.55 ? "choice" : "type";
+    if(!state.workshop.recentSubs) state.workshop.recentSubs = [];
+
+    // Choose a sub-drill to avoid heavy repetition.
+    let sub = type;
+    if(type==="detail"){
+      const base = String(state.workshop.refText||"").trim();
+      const fragment = base && countWords(base) < 3;
+      const opts = fragment
+        ? ["detail_finish", "detail_add"]
+        : ["detail_add", "detail_opinion", "detail_reason", "detail_time", "detail_two"];
+      sub = pickAvoid(opts, state.workshop.recentSubs);
+      if(sub==="detail_finish") variant = "type"; // best as a typed rep
+    }else if(type==="connector"){
+      sub = pickAvoid(["conn_pick", "conn_add", "conn_reason"], state.workshop.recentSubs);
+    }else if(type==="verbs"){
+      sub = pickAvoid(["verb_choice", "verb_type"], state.workshop.recentSubs);
+      if(sub==="verb_choice") variant = "choice";
+      if(sub==="verb_type") variant = "type";
+    }
+    // remember
+    state.workshop.recentSubs.push(sub);
+    if(state.workshop.recentSubs.length > 6) state.workshop.recentSubs.shift();
+    state.workshop.currentSub = sub;
 
     // Helpers for language-specific tokens
     const L = state.lang;
@@ -1787,26 +1887,47 @@ if(type==="connector"){
                                                             "Schreibe EINEN Satz mit sein.";
       if(el.wsHelp) el.wsHelp.textContent = "Example: El profesor es simpático.";
     } else if(type==="detail"){
-      const ref = state.workshop.refItem || {prompt:"", answer:""};
-      const baseAns = String(ref.answer||"").trim();
+      const ref = state.workshop.refItem || {prompt:"", answer:"", suggestion:""};
+      const baseAns = String(state.workshop.refText||ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
+      const sub = state.workshop.currentSub || "detail_add";
 
-      if(baseAns){
+      if(sub==="detail_finish"){
         if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Upgrade THIS answer (add ONE extra detail):\n"${baseAns}"` :
-          (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):\n"${baseAns}"` :
-                       `Verbessere DIESE Antwort (ein Detail mehr):\n"${baseAns}"`;
+          (L==="es") ? `Finish this fragment into ONE full sentence (8+ words):\n"${String(ref.answer||baseAns||"").trim()}"` :
+          (L==="fr") ? `Termine ce fragment en UNE phrase complète (8+ mots):\n"${String(ref.answer||baseAns||"").trim()}"` :
+                       `Vervollständige dieses Fragment zu EINEM ganzen Satz (8+ Wörter):\n"${String(ref.answer||baseAns||"").trim()}"`;
+        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: a complete sentence (subject + verb + detail)." : "Aim: one complete sentence.";
+      }else if(sub==="detail_reason"){
+        if(el.wsPrompt) el.wsPrompt.textContent =
+          (L==="es") ? `Upgrade with opinion + reason (porque):\n"${baseAns||basePrompt||"—"}"` :
+          (L==="fr") ? `Améliore avec opinion + raison (parce que):\n"${baseAns||basePrompt||"—"}"` :
+                       `Verbessere mit Meinung + Grund (weil):\n"${baseAns||basePrompt||"—"}"`;
+        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: include 'porque' + a reason." : "Aim: include a reason connector.";
+      }else if(sub==="detail_time"){
+        if(el.wsPrompt) el.wsPrompt.textContent =
+          (L==="es") ? `Upgrade with a time phrase (antes/ahora/normalmente…):\n"${baseAns||basePrompt||"—"}"` :
+          (L==="fr") ? `Ajoute un repère de temps (avant/maintenant/d’habitude…):\n"${baseAns||basePrompt||"—"}"` :
+                       `Füge eine Zeitangabe hinzu (früher/jetzt/normalerweise…):\n"${baseAns||basePrompt||"—"}"`;
+        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: add ONE time phrase + one detail." : "Aim: add a time phrase.";
+      }else if(sub==="detail_two"){
+        if(el.wsPrompt) el.wsPrompt.textContent =
+          (L==="es") ? `Add a SECOND detail (también / además…):\n"${baseAns||basePrompt||"—"}"` :
+          (L==="fr") ? `Ajoute un DEUXIÈME détail (aussi / en plus…):\n"${baseAns||basePrompt||"—"}"` :
+                       `Füge EIN zweites Detail hinzu (auch / außerdem…):\n"${baseAns||basePrompt||"—"}"`;
+        if(el.wsHelp) el.wsHelp.textContent = (L==="es") ? "Aim: 2 details, 8+ words." : "Aim: two details.";
       }else{
+        // detail_add (default)
         if(el.wsPrompt) el.wsPrompt.textContent =
-          (L==="es") ? `Write a NEW upgraded answer for:\n"${basePrompt||"the last prompt"}"` :
-          (L==="fr") ? `Écris une NOUVELLE réponse améliorée pour :\n"${basePrompt||"le dernier prompt"}"` :
-                       `Schreibe eine NEUE verbesserte Antwort für:\n"${basePrompt||"die letzte Aufgabe"}"`;
+          (L==="es") ? `Upgrade THIS answer (add ONE extra detail):\n"${baseAns||basePrompt||"—"}"` :
+          (L==="fr") ? `Améliore CETTE réponse (ajoute UN détail):\n"${baseAns||basePrompt||"—"}"` :
+                       `Verbessere DIESE Antwort (ein Detail mehr):\n"${baseAns||basePrompt||"—"}"`;
+        if(el.wsHelp) el.wsHelp.textContent =
+          (L==="es") ? "Aim: ONE extra detail (también / además…) • 6+ words." :
+          (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
+                       "Ziel: EIN Detail mehr • 6+ Wörter.";
       }
-
-      if(el.wsHelp) el.wsHelp.textContent =
-        (L==="es") ? "Aim: ONE extra detail (también / además…) • 6+ words." :
-        (L==="fr") ? "Objectif: UN détail en plus • 6+ mots." :
-                     "Ziel: EIN Detail mehr • 6+ Wörter.";} else {
+    } else {
       if(el.wsPrompt) el.wsPrompt.textContent = "Type ONE improved sentence (clean + slightly longer).";
       if(el.wsHelp) el.wsHelp.textContent = "Aim for 8+ words.";
     }
@@ -1883,9 +2004,31 @@ if(type==="connector"){
       msgOk = "Great — correct ‘to be’.";
       msgNo = "Try again: include a correct ‘to be’ form.";
     } else if(type==="detail"){
-      ok = countWords(val) >= Math.max(6, Math.min(10, lvlRub.minWords));
-      msgOk = "Nice — more detail added.";
-      msgNo = "Try again: add one more detail (6+ words).";
+      const sub = state.workshop.currentSub || "detail_add";
+      const words = countWords(val);
+      const x = norm(val);
+
+      if(sub==="detail_finish"){
+        ok = words >= 8;
+        msgOk = "Good. Full sentence — now keep that standard.";
+        msgNo = "Not yet: make it a FULL sentence (8+ words).";
+      }else if(sub==="detail_reason"){
+        ok = words >= 10 && connectorPresent(val);
+        msgOk = "Better. Opinion + reason. That’s how you score.";
+        msgNo = "Add a reason connector (porque / parce que / weil) and reach 10+ words.";
+      }else if(sub==="detail_time"){
+        ok = words >= 8 && /(antes|ahora|normalmente|siempre|a\s+veces|hoy|ayer|manana|d['’]?habitude|maintenant|avant|souvent|immer|jetzt|fruher|oft)/.test(x);
+        msgOk = "Nice. Time phrase adds clarity.";
+        msgNo = "Add a time phrase (antes/ahora/normalmente…) and reach 8+ words.";
+      }else if(sub==="detail_two"){
+        ok = words >= 8 && /(tambien|ademas|aussi|en\s+plus|auch|ausserdem)/.test(x);
+        msgOk = "Good. Two details. That’s progress.";
+        msgNo = "Add a SECOND detail (también/además/aussi/auch…) and reach 8+ words.";
+      }else{
+        ok = words >= Math.max(6, Math.min(10, lvlRub.minWords));
+        msgOk = "Nice — more detail added.";
+        msgNo = "Try again: add one more detail (6+ words).";
+      }
     } else {
       ok = countWords(val) >= Math.max(7, Math.min(12, lvlRub.minWords+1));
       msgOk = "Nice — stronger model.";
