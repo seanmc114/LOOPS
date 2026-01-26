@@ -355,42 +355,52 @@ function pickRoundFocus(items, lang, rubric){
     });
   });
 
-  const priority = ["spelling","verb_form","verb_ending","agreement","articles_gender","word_order","missing_be","articles","too_short","no_connector","detail"];
+  // High-value “skill cogs” should surface even if they occur once.
+  const high = ["spelling","verb_form","verb_ending","agreement","articles_gender","word_order","missing_be","articles"];
+  const low  = ["too_short","no_connector","detail"];
 
-  // Choose best focus (needs a pattern if possible)
+  // Pick highest-count high-value tag (>=1)
   let best = null;
   let bestCount = 0;
-  priority.forEach(t=>{
+  high.forEach(t=>{
     const c = counts[t]||0;
-    if(c>=2 && c>bestCount){ best=t; bestCount=c; }
+    if(c>bestCount){ best=t; bestCount=c; }
   });
+
+  // If no high-value tag, fall back to low-value (prefer the most frequent)
   if(!best){
-    best = priority.find(t=>(counts[t]||0)>0) || "detail";
-    bestCount = counts[best]||0;
+    low.forEach(t=>{
+      const c = counts[t]||0;
+      if(c>bestCount){ best=t; bestCount=c; }
+    });
   }
 
-  // If the main issue is just "more detail", but we spotted a higher-value grammar pattern,
-  // focus on that instead (more useful than repeating "add detail" every time).
-  if(best==="too_short" || best==="detail"){
-    const strong = ["verb_form","verb_ending","word_order","articles_gender","agreement","missing_be"];
-    const pick = strong.find(t=>(counts[t]||0)>0);
-    if(pick){ best = pick; bestCount = counts[pick]||0; }
-  }
-  // Avoid focusing on connectors too early
-  if((rubric && !rubric.requireConnector) && best==="no_connector"){
-    best = (counts["verb_form"]||0)>0 ? "verb_form" : ((counts["articles_gender"]||0)>0 ? "articles_gender" : "detail");
-    bestCount = counts[best]||0;
-  }
+  if(!best){ best="detail"; bestCount=0; }
 
-  // Top tags (for UI “error cogs”)
-  const top = priority
-    .filter(t=>(counts[t]||0)>0)
-    .map(t=>({tag:t, count:counts[t], label:focusLabel(t, lang)}))
-    .sort((a,b)=> (b.count-a.count) || (priority.indexOf(a.tag)-priority.indexOf(b.tag)))
-    .slice(0,4);
+  const labelMap = {
+    spelling: "Spelling / accents",
+    verb_form: "Verb form (soy/tengo/me gusta…)",
+    verb_ending: "Verb endings (conjugation)",
+    agreement: "Agreement (alto/alta…)",
+    articles_gender: "Articles & gender (el/la/un/una)",
+    word_order: "Word order (me gusta…)",
+    missing_be: "Missing ‘to be’",
+    articles: "Articles",
+    too_short: "More detail",
+    no_connector: "Connect ideas",
+    detail: "More detail"
+  };
 
+  const label = labelMap[best] || "More detail";
   const ex = (examples[best]||[]).slice(0,4);
-  return {tag:best, count:bestCount, label:focusLabel(best, lang), examples:ex, top, counts};
+
+  // Top tags list for UI (show variety)
+  const top = Object.entries(counts)
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0,5)
+    .map(([t,c])=>({t,c,label:labelMap[t]||t}));
+
+  return { tag: best, count: bestCount, label, examples: ex, counts, top };
 }
 
 
@@ -644,14 +654,14 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       label: "Spanish",
       placeholder: "Write your answer in Spanish…",
       speech: "es-ES",
-      chipLabels: { ser: "ser", estar: "estar", accent: "accents", structure: "connectors" },
+      chipLabels: { ser: "ser", estar: "estar", accent: "accents", structure: "structure" },
     },
     fr: {
       label: "French",
       placeholder: "Write your answer in French…",
       speech: "fr-FR",
       // Internal keys stay ser/estar, but labels are French
-      chipLabels: { ser: "être", estar: "avoir", accent: "accents", structure: "connecteurs" },
+      chipLabels: { ser: "être", estar: "avoir", accent: "accents", structure: "structure" },
     },
     de: {
       label: "German",
@@ -1149,7 +1159,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       if(lvl<=2){
         el.tagTips.textContent = "Tip: one clean sentence + one detail.";
       }else if(lvl<=4){
-        el.tagTips.textContent = (badge==="structure") ? "Tip: add ONE connector (y/pero/porque) to link ideas." : "Tip: add one extra detail — connector only if it fits.";
+        el.tagTips.textContent = "Tip: one clean sentence + one detail. Watch verbs & articles. Connectors only if they fit.";
       }else{
         el.tagTips.textContent = "Tip: accuracy first (verbs/articles), then flow (connectors).";
       }
@@ -1213,9 +1223,20 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     if(!isLocked) input.focus();
   }
 
-  function handlePrev(){ if(state.idx===0) return; state.idx--; buildPromptUI(); updateGameHeader(); }
+  function handlePrev(){
+    if(state.idx===0) return;
+    // Save & lock the current answer before moving away (prevents “back” wiping answers)
+    const cur = document.getElementById("mainInput");
+    if(cur) state.answers[state.idx] = cur.value;
+    state.locked[state.idx] = true;
+    state.idx--;
+    buildPromptUI();
+    updateGameHeader();
+  }
   function handleNext(){
-    // lock the current answer once the learner moves on
+    // Save current input (mobile can miss last keystroke) and lock once the learner moves on
+    const cur = document.getElementById("mainInput");
+    if(cur) state.answers[state.idx] = cur.value;
     state.locked[state.idx] = true;
     if(state.idx < PROMPTS_PER_ROUND-1){
       state.idx++;
@@ -1366,13 +1387,13 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     return {...it, suggestion: sugg, why};
   });
 
-  state.showCorrections = false;
+  // Keep corrections visible by default when mistakes exist
   renderResults();
   show("results");
 
 
   // Coach intermission (tap to continue)
-  showCoachIntermission();
+  try{ showCoachIntermission(); }catch(e){ console.error(e); }
     }catch(err){
       console.error(err);
       try{ toast("Coach glitch — press Finish again, or Quit."); }catch(_){}
@@ -1594,6 +1615,8 @@ function isBadGymSeed(ans){
   if(!t) return true;
   // Treat dash-only / punctuation-only as empty (e.g., "—", "-", "...")
   if(/^[\-—–.·•,;:!?()\[\]{}'"]+$/.test(t)) return true;
+  // Treat leading dash fragments as unusable models (e.g., "—. Porque ...")
+  if(/^[\-—–]\s*\.?\s*/.test(t) && t.length < 18) return true;
   // Very short fragments are usually unusable as seeds
   if(t.length < 3) return true;
   return false;
