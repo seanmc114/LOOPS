@@ -844,7 +844,9 @@ textarea, .bigInput{
 .fbTip{ font-size:15px; line-height:1.45; }
 
 @media (max-width: 760px){
-  .mainInput{ min-height: 70px; font-size: 18px; }
+  .mainInput{ min-height: 140px; font-size: 18px; }
+  .wsPanel{ box-shadow:none; }
+  .panel, .card{ box-shadow:none; }
 }
 
 /* ================================
@@ -1364,3 +1366,7 @@ body::after{
   .promptCard .mainInput{ min-height:140px; font-size:18px; }
   .inputRow{ gap:8px; }
 }
+
+
+/* Reduce mobile tap lag */
+button, .btn, textarea, input{ touch-action: manipulation; }

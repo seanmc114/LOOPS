@@ -1155,7 +1155,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     state.roundFinished = false;
     state.elapsedMs = 0;
     clearInterval(state.timer);
-    state.timer = setInterval(()=>{ state.elapsedMs = Date.now()-state.startedAt; updateGameHeader(); }, 200);
+    state.timer = setInterval(()=>{ state.elapsedMs = Date.now()-state.startedAt; updateGameHeader(); }, 400);
     buildPromptUI();
     updateGameHeader();
     show("game");
@@ -1199,7 +1199,15 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     }catch{}
   }
 
-  function buildPromptUI(){
+  
+  function isIdxLocked(i){
+    // Once you move past a question, it becomes read-only (no editing by going back).
+    const max = Number(state.maxIdxReached)||1;
+    if(i < (max-1)) return true;
+    return !!state.locked[i];
+  }
+
+function buildPromptUI(){
     if(!el.promptArea) return;
     el.promptArea.innerHTML = "";
     const p = state.prompts[state.idx];
@@ -1225,9 +1233,9 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
     const input = wrap.querySelector("#mainInput");
     input.value = state.answers[state.idx] || "";
 
-    const isLocked = !!state.locked[state.idx];
+    const isLocked = isIdxLocked(state.idx);
     if(isLocked){
-      input.disabled = true;
+      input.readOnly = true;
       input.classList.add("locked");
     }else{
       input.addEventListener("input", ()=>{ state.answers[state.idx] = input.value; });
@@ -1249,6 +1257,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
     }
     state.locked[state.idx] = true;
+    state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
     state.idx--;
     buildPromptUI();
     updateGameHeader();
@@ -1261,6 +1270,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
     }
     state.locked[state.idx] = true;
+    state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
     if(state.idx < PROMPTS_PER_ROUND-1){
       state.idx++;
       state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
@@ -1287,12 +1297,24 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   function countWords(s){ return String(s||"").trim().split(/\s+/).filter(Boolean).length; }
   function connectorPresent(s){ const x=norm(s); return /(\by\b|\bpero\b|\bporque\b|\bademas\b|\bentonces\b|\btambien\b|\bya\s+que\b)/.test(x) || /(\bet\b|\bmais\b|\bparce\s+que\b|\bdonc\b)/.test(x) || /(\bund\b|\baber\b|\bweil\b|\bdeshalb\b)/.test(x); }
   function beVerbPresent(s){ const x=norm(s); if(state.lang==="es") return /(\bes\b|\bson\b|\bestoy\b|\bestá\b|\bsoy\b)/.test(x); if(state.lang==="fr") return /(\bc\s*est\b|\best\b|\bsont\b|\bsuis\b|\bai\b|\bas\b|\ba\b|\bont\b)/.test(x); if(state.lang==="de") return /(\bist\b|\bsind\b|\bbin\b|\bseid\b|\bhabe\b|\bhat\b|\bhaben\b)/.test(x); return false; }
-  function pickModelAnswer(p, given){ const t=tidySuggestion(given); if(t && t.length>=10 && t!=="—." && t!=="—") return t; const text=(p&&p.text)?p.text.toLowerCase():""; if(state.lang==="es"){ if(text.includes("teacher")) return "El profesor es simpático y explica muy bien."; if(text.includes("best friend")) return "Mi mejor amigo es divertido y muy amable."; if(text.includes("classroom")) return "Mi clase es grande y luminosa."; if(text.includes("school")) return "Mi colegio es moderno y está en el centro."; if(text.includes("bedroom")) return "Mi habitación es cómoda y ordenada."; return "Es muy interesante y me gusta mucho."; } if(state.lang==="fr"){ if(text.includes("teacher")) return "Le professeur est sympa et il explique très bien."; if(text.includes("best friend")) return "Mon meilleur ami est drôle et très gentil."; if(text.includes("classroom")) return "Ma salle de classe est grande et lumineuse."; if(text.includes("school")) return "Mon école est moderne et elle est au centre."; if(text.includes("bedroom")) return "Ma chambre est confortable et bien rangée."; return "C’est très intéressant et j’aime beaucoup."; } if(state.lang==="de"){ if(text.includes("teacher")) return "Der Lehrer ist nett und erklärt sehr gut."; if(text.includes("best friend")) return "Mein bester Freund ist lustig und sehr freundlich."; if(text.includes("classroom")) return "Mein Klassenzimmer ist groß und hell."; if(text.includes("school")) return "Meine Schule ist modern und liegt im Zentrum."; if(text.includes("bedroom")) return "Mein Zimmer ist gemütlich und ordentlich."; return "Es ist sehr interessant und ich mag es sehr."; } return tidySuggestion(given)||""; }
+  
+  function pickModelAnswer(p){
+    const prompt = (p && p.text) ? String(p.text) : "";
+    // Always return a prompt-based model. Never echo the learner's own answer.
+    try{
+      const rub = levelRubric(state.level);
+      return buildSuggestionForItem(prompt, "", state.lang, rub, "detail");
+    }catch(_){
+      // ultra-safe fallback
+      if(state.lang==="es") return "Es interesante y me gusta bastante.";
+      if(state.lang==="fr") return "C’est intéressant et j’aime bien.";
+      if(state.lang==="de") return "Es ist interessant und ich mag es.";
+      return "It’s interesting and I like it.";
+    }
+  }
+
   function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch])); }
-
-
-  // ---- Scaffold hints (mini checklist per prompt) ----
-  function scaffoldForPrompt(text, level, lang){
+function scaffoldForPrompt(text, level, lang){
     const t = String(text||"").toLowerCase();
     const lvl = Math.min(10, Math.max(1, Number(level)||1));
 
@@ -1406,7 +1428,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
       const aiSaysCorrect = (ai.is_correct===true) || (ai.isCorrect===true) || (ai.correct===true);
       if(!ok && aiSaysCorrect){ ok=true; reason=""; }
 
-      const suggestion = (aiCorrection && String(aiCorrection).trim()) ? String(aiCorrection).trim() : pickModelAnswer(p, ans);
+      const suggestion = (aiCorrection && String(aiCorrection).trim()) ? String(aiCorrection).trim() : buildSuggestionForItem(p.text, "", state.lang, rubric, "detail");
       const tip = (aiTip && String(aiTip).trim()) ? String(aiTip).trim() : (ok ? "Nice — add one extra detail next time." : "Upgrade: add one extra detail + keep it one clean sentence.");
       const why = (aiWhy && String(aiWhy).trim()) ? String(aiWhy).trim() : (ok ? "" : `To score: ${reason}.`);
 
@@ -1461,10 +1483,6 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
   // Keep corrections visible by default when mistakes exist
   renderResults();
   show("results");
-
-
-  // Coach intermission (tap to continue)
-  try{ showCoachIntermission(); }catch(e){ console.error(e); }
     }catch(err){
       console.error(err);
       // Fallback: still produce results so the player can always finish the round.
@@ -1483,7 +1501,7 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
             if(ok && rubric.requireBe && (p.badge==="ser") && !beVerbPresent(ans)){ ok=false; reason="Missing to-be"; }
           }
           if(!ok) wrong++;
-          const suggestion = pickModelAnswer(p, ans);
+          const suggestion = buildSuggestionForItem(p.text||"", "", state.lang, rubric, "detail");
           const det = detectTags(p.text||"", ans||"", state.lang, rubric);
           items.push({ n:i+1, prompt:p.text||"—", answer:ans||"—", ok, reason, suggestion, tip: tipForTags(det.tags,state.lang)||"", why: ok?"":("To score: "+reason+"."), tags: det.tags, examples: det.examples });
         }
@@ -1639,7 +1657,7 @@ function renderResults(){
         prompt: p ? p.text : "—",
         answer: String(state.answers[i]||"").trim() || "—",
         ok: true,
-        suggestion: pickModelAnswer(p, state.answers[i]||""),
+        suggestion: pickModelAnswer(p),
         tip: "",
         why: ""
       }));
@@ -1752,10 +1770,23 @@ function buildGymPool(){
   const pool = [];
   for(let i=0;i<items.length;i++){
     const it = items[i] || {};
-    const prompt = String(it.prompt||"").trim();
+    let prompt = String(it.prompt||"").trim();
+    if(!prompt && Array.isArray(state.prompts) && state.prompts[i] && state.prompts[i].text) prompt = String(state.prompts[i].text).trim();
     const answer = String(it.answer||"").trim();
     const key = (prompt+"|"+answer).slice(0,220);
     pool.push(Object.assign({}, it, {_idx:i, _key:key, prompt, answer}));
+  }
+  // If the round didn’t produce many usable items (e.g., lots of blanks), add prompt-only items
+  // so the Gym can still vary exercises and feel ‘organic’ instead of repeating the same seed.
+  if(pool.length < 6 && Array.isArray(state.prompts)){
+    const existingPrompts = new Set(pool.map(x=>String(x.prompt||"").trim().toLowerCase()).filter(Boolean));
+    for(let j=0;j<state.prompts.length && pool.length<10;j++){
+      const pr = state.prompts[j] && state.prompts[j].text ? String(state.prompts[j].text).trim() : "";
+      const keyp = pr.toLowerCase();
+      if(!pr || existingPrompts.has(keyp)) continue;
+      existingPrompts.add(keyp);
+      pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"", tags:["detail"], _idx:j, _key:(pr+"|—").slice(0,220)});
+    }
   }
   return pool;
 }
@@ -1852,7 +1883,9 @@ function openGymFromResults(){
     state.workshop.currentItem = pickGymItem(state.workshop.focusTag);
 
     const type = gymFocusType();
-    const variant = Math.random() < 0.55 ? "choice" : "type";
+    let variant = Math.random() < 0.55 ? "choice" : "type";
+    if(state.workshop.lastVariant && state.workshop.lastVariant===variant) variant = (variant==="choice"?"type":"choice");
+    state.workshop.lastVariant = variant;
 
     // Helpers for language-specific tokens
     const L = state.lang;
@@ -2038,10 +2071,10 @@ if(type==="detail" || type==="upgrade"){
         const ref = (state.workshop.currentItem || state.workshop.refItem || {prompt:"", answer:""});
         const ptxt = String(ref.prompt||"").trim();
         const ans = String(ref.answer||"").trim();
-        let model = String(ref.suggestion||"").trim() || pickModelAnswer({text: ptxt || "Describe something."}, ans || "");
+        let model = String(ref.suggestion||"").trim() || pickModelAnswer({text: ptxt || "Describe something."});
         // Never allow placeholder / fragment "—" models in the Gym.
         if(!model || /^—/.test(model) || isBadGymSeed(model)){
-          model = pickModelAnswer({text: ptxt || "Describe something."}, "");
+          model = pickModelAnswer({text: ptxt || "Describe something."});
         }
         const base = (!isBadGymSeed(ans)) ? tidySuggestion(ans) : (String(model).split(".")[0] + ".");
         const stronger = tidySuggestion(model);
@@ -2147,7 +2180,7 @@ if(type==="connector"){
       const baseAns = String(ref.answer||"").trim();
       const basePrompt = String(ref.prompt||"").trim();
       let model = String(ref.suggestion||"").trim();
-      if(!model || isBadGymSeed(model)) model = pickModelAnswer({text: basePrompt || "Describe something."}, baseAns || "");
+      if(!model || isBadGymSeed(model)) model = pickModelAnswer({text: basePrompt || "Describe something."});
 
       if(el.wsPrompt){
         if(!isBadGymSeed(baseAns)){
