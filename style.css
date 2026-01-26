@@ -1392,3 +1392,31 @@ button, .btn, textarea, input{ touch-action: manipulation; }
 /* Make 'Show Corrections' unmistakable */
 #toggleFeedbackBtn{ background: var(--accent); color: #fff; border-color: rgba(255,255,255,.25); box-shadow: 0 14px 28px rgba(0,0,0,.12); }
 #toggleFeedbackBtn:hover{ filter: brightness(1.02); }
+
+/* --- v25 polish: clearer Gym + more colour in feedback --- */
+.fbCard{
+  background: linear-gradient(180deg, rgba(99,102,241,.10), rgba(255,255,255,.92));
+}
+.fbTags{ margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+.fbTag{
+  font-size:11px;
+  font-weight:950;
+  padding:4px 8px;
+  border-radius:999px;
+  background: rgba(245,158,11,.14);
+  border:1px solid rgba(245,158,11,.30);
+  color:#92400e;
+}
+
+#toggleFeedbackBtn{
+  box-shadow: 0 10px 20px rgba(99,102,241,.22);
+}
+
+.wsPromptTitle{ font-weight:950; font-size:16px; }
+.wsPromptPrompt{ margin-top:8px; font-weight:950; font-size:18px; line-height:1.25; }
+.wsHelpLine{ font-size:13px; font-weight:850; opacity:.95; }
+
+@media (max-width: 760px){
+  .wsPromptPrompt{ font-size:19px; }
+  .fbText{ font-size:16px; }
+}

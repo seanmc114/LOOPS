@@ -34,7 +34,7 @@ const LS_NAME = "loops_playerName_v1";
 const LS_REWARDS = "loops_rewards_v1"; // {coins:number, loot:{[id]:true}, last:{...}}
 const COACH = {
   // A loose, football‑manager caricature: stern, funny, obsessed with standards.
-  name: "Coach El Mister",
+  name: "Don Diego (El Mister)",
   avatar: "🧥⚽",
   avatarHtml: `<svg viewBox="0 0 64 64" width="44" height="44" aria-hidden="true">
   <path d="M20 26c0-7 5-12 12-12s12 5 12 12-5 14-12 14-12-7-12-14Z" fill="currentColor" opacity=".9"/>
@@ -247,6 +247,33 @@ function presentCoachModal(){
     const line2 = mustGym
       ? "Gym is required. Earn the exit. Then you come back sharper."
       : "Gym is optional. Review feedback, then decide if you want reps.";
+
+    const reasonMap = {
+      spelling: "Spelling/accents cost easy points. Fix them and everything reads smarter.",
+      verb_form: "Wrong verb form breaks the sentence. We fix the engine first.",
+      verb_ending: "Verb endings matter: yo como / él come. Conjugate.",
+      agreement: "Agreement: adjective endings match (alto/alta).",
+      articles_gender: "Articles/gender are small, but they shout beginner when wrong. Tighten them up.",
+      articles: "Articles make Spanish sound natural (un/una, el/la).",
+      word_order: "Word order changes meaning. Get the pattern, then it’s automatic.",
+      missing_be: "You need the ‘to be’ verb to make descriptions work.",
+      no_connector: "Your ideas need linking. One correct connector makes it flow.",
+      too_short: "Too short = no marks. Add one detail and you jump up.",
+      detail: "Detail wins marks. One extra fact is the difference."
+    };
+    const drillMap = {
+      spelling: "Drill: clean spelling/accents.",
+      verb_form: "Drill: verb forms (soy/tengo/me gusta).",
+      verb_ending: "Drill: conjugate endings (yo como / él come).",
+      agreement: "Drill: adjective agreement (alto/alta).",
+      articles_gender: "Drill: articles + gender (el/la, un/una).",
+      articles: "Drill: articles (un/una, el/la).",
+      word_order: "Drill: word order patterns (me gusta…).",
+      missing_be: "Drill: ser/estar.",
+      no_connector: "Drill: connectors (y/pero/porque/además).",
+      too_short: "Drill: add one extra detail.",
+      detail: "Drill: add one extra detail."
+    };
 
     const focusWhy = (reasonMap[focusTag] || "One thing. Fix it properly.");
     const drillLine = (drillMap[focusTag] || "Quick reps. Then back in.");
@@ -461,22 +488,23 @@ function focusLabel(tag, lang){
   const L = lang || "es";
   if(tag==="spelling") return (L==="es") ? "Spelling & accents" : "Spelling";
   if(tag==="verb_form") return "Verb forms";
-  if(tag==="articles_gender") return "Articles & gender";
-  if(tag==="word_order") return "Word order";
   if(tag==="verb_ending") return "Verb endings";
   if(tag==="agreement") return "Agreement";
+  if(tag==="articles_gender") return "Articles & gender";
   if(tag==="articles") return "Articles";
+  if(tag==="word_order") return "Word order";
   if(tag==="missing_be") return "Missing ‘to be’";
   if(tag==="no_connector") return "Connectors";
   if(tag==="too_short") return "More detail";
   if(tag==="detail") return "More detail";
   return "One key fix";
-
+}
 
 function tipForTags(tags, lang){
   const t = Array.isArray(tags)?tags:[];
   const has = (x)=> t.includes(x);
   if(lang==="es"){
+    // Show the most useful coaching line (priority order)
     if(has("verb_form")) return "Fix the verb: soy/tengo/me gusta (this is where marks disappear).";
     if(has("verb_ending")) return "Conjugate the verb (yo como / él come) — don’t leave it as an infinitive.";
     if(has("word_order")) return "Word order: me gusta + infinitivo (not *yo gusta*).";
@@ -486,15 +514,14 @@ function tipForTags(tags, lang){
     if(has("no_connector")) return "Link ideas with one connector: y / pero / porque / además.";
     if(has("spelling")) return "Fix spelling/accents — quick easy points.";
     if(has("too_short")) return "Add one extra detail (place, activity, opinion, reason).";
-  }else{
-    if(has("too_short")) return "Add one extra detail (what/where/why).";
+    return "Add one extra detail — then link ideas cleanly.";
   }
-  return "";
-}
-
+  if(has("too_short")) return "Add one extra detail (what/where/why).";
+  return "Make it clean, then add one extra detail.";
 }
 
 function pickRoundFocus(items, lang, rubric){
+
   // Count tags across items
   const counts = {};
   const examples = {};
@@ -643,6 +670,50 @@ function buildSuggestionForItem(prompt, answer, lang, rubric, focusTag){
         const fixed = low.startsWith("mi ") ? (a[0].toUpperCase()+a.slice(1)) : ("Es " + a);
         return wordFixesES(fixed).fixed;
       }
+    }
+
+    // Verb form / endings focus: fix common patterns locally
+    if(focusTag==="verb_form" || focusTag==="verb_ending" || focusTag==="word_order"){
+      let x = wordFixesES(a).fixed;
+      const lo = x.toLowerCase();
+      // Common high-frequency repairs
+      x = x.replace(/\byo\s+es\b/gi, "Yo soy");
+      x = x.replace(/\byo\s+tiene\b/gi, "Yo tengo");
+      x = x.replace(/\byo\s+gusta\b/gi, "Me gusta");
+      x = x.replace(/\bme\s+gusto\b/gi, "Me gusta");
+      x = x.replace(/\bgusta\s+me\b/gi, "Me gusta");
+      // Pronoun + infinitive → rough conjugation for a small JC core
+      const conj = {
+        "ser": {"yo":"soy","tú":"eres","tu":"eres","él":"es","el":"es","ella":"es","nosotros":"somos","vosotros":"sois","ellos":"son","ellas":"son"},
+        "estar": {"yo":"estoy","tú":"estás","tu":"estás","él":"está","el":"está","ella":"está","nosotros":"estamos","vosotros":"estáis","ellos":"están","ellas":"están"},
+        "tener": {"yo":"tengo","tú":"tienes","tu":"tienes","él":"tiene","el":"tiene","ella":"tiene","nosotros":"tenemos","vosotros":"tenéis","ellos":"tienen","ellas":"tienen"},
+        "vivir": {"yo":"vivo","tú":"vives","tu":"vives","él":"vive","el":"vive","ella":"vive","nosotros":"vivimos","vosotros":"vivís","ellos":"viven","ellas":"viven"},
+        "hablar": {"yo":"hablo","tú":"hablas","tu":"hablas","él":"habla","el":"habla","ella":"habla","nosotros":"hablamos","vosotros":"habláis","ellos":"hablan","ellas":"hablan"},
+        "comer": {"yo":"como","tú":"comes","tu":"comes","él":"come","el":"come","ella":"come","nosotros":"comemos","vosotros":"coméis","ellos":"comen","ellas":"comen"},
+        "ir": {"yo":"voy","tú":"vas","tu":"vas","él":"va","el":"va","ella":"va","nosotros":"vamos","vosotros":"vais","ellos":"van","ellas":"van"}
+      };
+      const m = lo.match(/\b(yo|tú|tu|él|el|ella|nosotros|vosotros|ellos|ellas)\s+(ser|estar|tener|vivir|hablar|comer|ir)\b/);
+      if(m){
+        const pro = m[1];
+        const vb = m[2];
+        const rep = (conj[vb] && conj[vb][pro]) ? conj[vb][pro] : vb;
+        x = x.replace(new RegExp('\b'+m[1]+'\s+'+m[2]+'\b','i'), (m[1].toLowerCase()==='yo'? 'Yo' : m[1])+' '+rep);
+      }
+      return wordFixesES(x).fixed;
+    }
+
+    // Articles/gender/agreement focus: apply a couple of high-impact fixes
+    if(focusTag==="articles_gender" || focusTag==="articles" || focusTag==="agreement"){
+      let x = wordFixesES(a).fixed;
+      // el/un + feminine noun → la/una
+      x = x.replace(/\b(el|un)\s+(casa|habitaci[oó]n|clase|escuela|familia|ciudad)\b/gi, (m,art,n)=> (art.toLowerCase()==='el' ? 'la ' : 'una ') + n);
+      // la/una + masculine noun → el/un
+      x = x.replace(/\b(la|una)\s+(colegio|instituto|padre|hermano|amigo|pueblo|f[uú]tbol|deporte)\b/gi, (m,art,n)=> (art.toLowerCase()==='la' ? 'el ' : 'un ') + n);
+      // simple adjective agreement after "es"
+      x = x.replace(/\bes\s+alto\b/gi, "es alto");
+      x = x.replace(/\b(mi|tu|su)\s+(madre|hermana|amiga|profesora)\s+es\s+alto\b/gi, (m)=> m.replace(/alto$/i,'alta'));
+      x = x.replace(/\b(mi|tu|su)\s+(padre|hermano|amigo|profesor)\s+es\s+alta\b/gi, (m)=> m.replace(/alta$/i,'alto'));
+      return wordFixesES(x).fixed;
     }
 
     // Detail focus: add ONE extra detail, contextual to prompt
@@ -1403,8 +1474,8 @@ function buildPromptUI(){
       if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
     }
     state.locked[state.idx] = true;
-    if(String(state.answers[state.idx]||'').trim()) state.lockedAnswers[state.idx] = state.answers[state.idx];
-    if(String(state.answers[state.idx]||'').trim()) state.lockedAnswers[state.idx] = state.answers[state.idx];
+    // Freeze what the learner wrote at this index (even if they later navigate around)
+    state.lockedAnswers[state.idx] = String(state.answers[state.idx]||"");
     state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
     state.idx--;
     buildPromptUI();
@@ -1418,6 +1489,8 @@ function buildPromptUI(){
       if(String(v||"").trim() || !String(state.answers[state.idx]||"").trim()) state.answers[state.idx] = v;
     }
     state.locked[state.idx] = true;
+    // Freeze what the learner wrote at this index
+    state.lockedAnswers[state.idx] = String(state.answers[state.idx]||"");
     state.maxIdxReached = Math.max(state.maxIdxReached, state.idx+1);
     if(state.idx < PROMPTS_PER_ROUND-1){
       state.idx++;
@@ -1608,7 +1681,7 @@ if(aiCorrection && String(aiCorrection).trim()){
       }
 
       const aiSaysCorrect = (ai.is_correct===true) || (ai.isCorrect===true) || (ai.correct===true);
-      if(!ok && aiSaysCorrect){ ok=true; reason=""; }
+      if(!ok && aiSaysCorrect && ans){ ok=true; reason=""; }
 
       const suggestion = (aiCorrection && String(aiCorrection).trim()) ? String(aiCorrection).trim() : buildSuggestionForItem(p.text, "", state.lang, rubric, "detail");
       const tip = (aiTip && String(aiTip).trim()) ? String(aiTip).trim() : (ok ? "Nice — add one extra detail next time." : "Upgrade: add one extra detail + keep it one clean sentence.");
@@ -1647,7 +1720,7 @@ if(aiCorrection && String(aiCorrection).trim()){
 
   // Rewrite suggestions to match focus (avoid samey output)
   state.mark.items = state.mark.items.map(it=>{
-    const sugg = buildSuggestionForItem(it.prompt, it.answer, state.lang, rubric, state.mark.focusTag);
+    const fix = it.ok ? "" : buildSuggestionForItem(it.prompt, it.answer, state.lang, rubric, state.mark.focusTag);
     // Only show detailed coach note for the chosen focus
     let why = it.why || "";
     if(state.mark.focusTag==="spelling" && it.examples && it.examples.length){
@@ -1659,7 +1732,7 @@ if(aiCorrection && String(aiCorrection).trim()){
     }else if(state.mark.focusTag==="no_connector"){
       why = (state.lang==="es") ? "Coach target: connect ideas (y/pero/porque/además)." : "Coach target: use a connector.";
     }
-    return {...it, suggestion: sugg, why};
+    return {...it, fix, why};
   });
 
   // Keep corrections visible by default when mistakes exist
@@ -1697,7 +1770,6 @@ if(aiCorrection && String(aiCorrection).trim()){
         state.ai.ok = false;
         state.ai.error = "fallback used";
       }catch(_){ }
-      try{ toast("Coach was slow — showing fallback results."); }catch(_){ }
     }finally{
       state.isMarking = false;
       // Ensure results are visible if we have a mark payload
@@ -1823,9 +1895,9 @@ if(aiCorrection && String(aiCorrection).trim()){
       modal.innerHTML = `
         <div class="coachModalInner" role="dialog" aria-modal="true">
           <div class="coachModalTop">
-            <div class="coachAvatar" aria-hidden="true">⚽</div>
+            <div class="coachAvatar" aria-hidden="true">🧥⚽</div>
             <div>
-              <div class="coachTitle">EL MISTER</div>
+              <div class="coachTitle">DON DIEGO</div>
               <div class="coachLine">${escapeHtml(msg)}</div>
             </div>
           </div>
@@ -1846,7 +1918,7 @@ if(aiCorrection && String(aiCorrection).trim()){
 function renderResults(){
     updatePills();
     const m=state.mark;
-    if(el.aiStatusText) el.aiStatusText.textContent = state.ai.ok ? "Marked by coach ✓" : `Marked (AI slow/failed — fallback used): ${state.ai.error}`;
+    if(el.aiStatusText) el.aiStatusText.textContent = state.ai.ok ? "Coach upgraded your feedback ✓" : "";
     if(el.timeOut) el.timeOut.textContent = fmtTime(state.elapsedMs);
     if(el.wrongOut) el.wrongOut.textContent = String(m.wrong);
     if(el.scoreOut) el.scoreOut.textContent = `${m.scoreSec.toFixed(1)}s`;
@@ -1898,7 +1970,7 @@ function renderResults(){
         card.innerHTML = `
           <div class="fbTop">
             <div class="fbNum">${it.n}</div>
-            <div class="fbPrompt">${escapeHtml(it.prompt)}${scaffoldHtml(sc)}</div>
+            <div class="fbPrompt">${escapeHtml(it.prompt)}${scaffoldHtml(sc)}${(it.tags&&it.tags.length)?`<div class=\"fbTags\">${it.tags.slice(0,2).map(t=>`<span class=\"fbTag\">${escapeHtml(focusLabel(t,state.lang))}</span>`).join('')}</div>`:''}</div>
             <div class="fbVerdict ${it.ok?"good":"bad"}">${it.ok?"OK":"Fix"}</div>
           </div>
           <div class="fbBody">
@@ -1910,6 +1982,10 @@ function renderResults(){
               <div class="fbLabel">Coach model (what “correct” looks like)</div>
               <div class="fbText">${escapeHtml(it.suggestion||"—")}</div>
             </div>
+            ${(!it.ok && it.fix) ? `<div class="fbBox">
+              <div class="fbLabel">Quick fix (coach focus)</div>
+              <div class="fbText">${escapeHtml(it.fix)}</div>
+            </div>` : ""}
           </div>
           <div class="fbTip">${escapeHtml(it.tip||"")}${it.why?("<br><span style='opacity:.85'>"+escapeHtml(it.why)+"</span>"):""}</div>
         `;
@@ -1961,20 +2037,36 @@ function renderResults(){
   
 
 function pickGymRepTag(){
-  // Rotate between the main focus tag and a couple of other common tags from the round.
+  // Rotate between the round’s focus and other core skills for variety.
   const main = state.workshop.focusTag || "detail";
   const alt = Array.isArray(state.workshop.altTags) ? state.workshop.altTags : [];
-  const options = [main].concat(alt).filter((v,i,a)=>a.indexOf(v)===i);
-  // Prefer not repeating the same tag twice in a row
+  const lvl = Math.min(10, Math.max(1, Number(state.level)||1));
+
+  // Even if the round focus is "detail", we still mix in other JC skills
+  // so the Gym doesn’t become the same ‘add one detail’ loop.
+  const extra = [];
+  if(lvl>=2) extra.push("verb_form","missing_be");
+  if(lvl>=3) extra.push("articles_gender");
+  if(lvl>=4) extra.push("word_order");
+  if(lvl>=5) extra.push("spelling");
+  if(lvl>=6) extra.push("no_connector");
+  if(lvl>=7) extra.push("agreement","verb_ending");
+
+  const options = [main].concat(alt).concat(extra).filter((v,i,a)=>v&&a.indexOf(v)===i);
   const last = state.workshop.lastRepTag || "";
   let candidates = options.filter(t=>t!==last);
-  if(!candidates.length) candidates = options;
-  // Light weighting: main focus is most frequent, but not dominant
+  if(!candidates.length) candidates = options.length ? options : [main];
+
+  // Weight: main focus most likely, then alt tags, then extras.
   const bag = [];
   candidates.forEach(t=>{
-    const w = (t===main) ? 3 : 2;
+    let w = 1;
+    if(t===main) w = 3;
+    else if(alt.includes(t)) w = 2;
+    else w = 1;
     for(let i=0;i<w;i++) bag.push(t);
   });
+
   const pick = bag[Math.floor(Math.random()*bag.length)] || main;
   state.workshop.lastRepTag = pick;
   return pick;
@@ -2085,6 +2177,7 @@ function pickGymItem(preferTag){
   const pool = Array.isArray(state.workshop.pool) ? state.workshop.pool : [];
   if(!pool.length) return (state.workshop.currentItem || state.workshop.refItem) || {prompt:"", answer:""};
   const recent = Array.isArray(state.workshop.recentItemKeys) ? state.workshop.recentItemKeys : [];
+  const recentPrompts = Array.isArray(state.workshop.recentPrompts) ? state.workshop.recentPrompts : [];
   const lastPrompt = String(state.workshop.lastPrompt || "");
   // Start with valid seeds (avoid "—" etc.)
   let candidates = pool.filter(it=> !isBadGymSeed(it.answer) || String(it.prompt||"").trim());
@@ -2095,8 +2188,13 @@ function pickGymItem(preferTag){
   }
   // Avoid immediate repetition
   const notRecent = candidates.filter(it=> !recent.includes(it._key));
+  // Avoid repeating the same prompt too often (keep last 4 prompts off-limits when possible)
+  const notRecentPrompt = notRecent.filter(it=>{
+    const k = String(it.prompt||"").trim().toLowerCase();
+    return k ? !recentPrompts.includes(k) : true;
+  });
   // Avoid repeating the same prompt text twice in a row when possible
-  const notSamePrompt = (lastPrompt ? notRecent.filter(it=> String(it.prompt||"").trim() && String(it.prompt||"").trim().toLowerCase() !== lastPrompt.trim().toLowerCase()) : notRecent);
+  const notSamePrompt = (lastPrompt ? notRecentPrompt.filter(it=> String(it.prompt||"").trim() && String(it.prompt||"").trim().toLowerCase() !== lastPrompt.trim().toLowerCase()) : notRecentPrompt);
   const pickFrom = notSamePrompt.length ? notSamePrompt : (notRecent.length ? notRecent : candidates);
   let picked = pickFrom[Math.floor(Math.random()*pickFrom.length)] || candidates[0] || pool[0];
   // Ensure we always have a real prompt for the learner
@@ -2121,6 +2219,13 @@ function pickGymItem(preferTag){
     const nextRecent = [picked._key].concat(recent.filter(k=>k!==picked._key)).slice(0,6);
     state.workshop.recentItemKeys = nextRecent;
   }
+  try{
+    const kp = String(picked && picked.prompt ? picked.prompt : "").trim().toLowerCase();
+    if(kp){
+      const nextP = [kp].concat(recentPrompts.filter(x=>x!==kp)).slice(0,4);
+      state.workshop.recentPrompts = nextP;
+    }
+  }catch(_){ }
   return picked || {prompt:"", answer:""};
 }
 
@@ -2429,13 +2534,15 @@ if(type==="detail" || type==="upgrade"){
         const stronger = tidySuggestion(model);
 
         if(el.wsPrompt){
-          el.wsPrompt.textContent = (type==="detail")
-            ? ((L==="es") ? "Pick the answer with ONE extra detail:"
-               : (L==="fr") ? "Choisis la réponse avec UN détail en plus :"
-                            : "Wähle die Antwort mit EINEM Extra-Detail:")
-            : ((L==="es") ? "Pick the strongest model answer:"
-               : (L==="fr") ? "Choisis la meilleure réponse modèle :"
-                            : "Wähle die beste Musterantwort:");
+          const inst = (type==="detail")
+            ? ((L==="es") ? "Pick the answer with ONE extra detail"
+               : (L==="fr") ? "Choisis la réponse avec UN détail en plus"
+                            : "Wähle die Antwort mit EINEM Extra-Detail")
+            : ((L==="es") ? "Pick the strongest model answer"
+               : (L==="fr") ? "Choisis la meilleure réponse modèle"
+                            : "Wähle die beste Musterantwort");
+          const pr = ptxt || "—";
+          el.wsPrompt.innerHTML = `<div class="wsPromptTitle">${escapeHtml(inst)}</div><div class="wsPromptPrompt">${escapeHtml(pr)}</div>`;
         }
 
         const weak = (L==="es") ? "Es bueno." : (L==="fr") ? "C’est bien." : "Es ist gut.";
@@ -2459,9 +2566,11 @@ if(type==="detail" || type==="upgrade"){
         });
 
         if(el.wsHelp){
-          const hintP = ptxt ? `Prompt: ${ptxt}` : "";
-          const hintM = stronger ? `Coach model: ${stronger}` : "";
-          el.wsHelp.textContent = [hintP, hintM].filter(Boolean).join(" • ");
+          const aim = (L==="es") ? "Aim: ONE extra detail • 6+ words." : "Aim: ONE extra detail.";
+          el.wsHelp.innerHTML = `
+            <div class="wsHelpLine"><b>PROMPT:</b> ${escapeHtml(ptxt||"—")}</div>
+            <div class="wsHelpLine"><b>COACH MODEL:</b> ${escapeHtml(stronger||"—")}</div>
+            <div class="wsHelpLine"><b>${escapeHtml(aim)}</b></div>`;
         }
 
       }
