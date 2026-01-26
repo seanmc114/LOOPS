@@ -1096,16 +1096,17 @@ body::after{
   padding:16px 18px 12px;
 }
 .coachAvatar{
-  width:54px; height:54px;
-  border-radius:18px;
+  width:84px; height:84px;
+  border-radius:24px;
   display:grid; place-items:center;
-  background: rgba(255,255,255,.8);
-  border: 1px solid rgba(0,0,0,.08);
-  box-shadow: 0 12px 22px rgba(0,0,0,.10);
-  font-size:28px;
+  background: rgba(255,255,255,.92);
+  border: 1px solid rgba(0,0,0,.10);
+  box-shadow: 0 18px 30px rgba(0,0,0,.14);
+  font-size:44px;
 }
-.modalTitle{ font-size:18px; font-weight:950; }
-.modalSub{ margin-top:2px; font-size:13px; color:var(--muted); font-weight:800; }
+
+.modalTitle{ font-size:22px; font-weight:1000; letter-spacing:.3px; }
+.modalSub{ margin-top:2px; font-size:13px; color:var(--muted); font-weight:900; }
 .modalBody{
   padding: 0 18px 14px;
   font-size:14px;

@@ -162,6 +162,60 @@ function showCoachModal(opts){
 }
 function hideCoachModal(){
   if(el.coachModal) el.coachModal.classList.add("hidden");
+
+function presentCoachModal(){
+  try{
+    const m = state.mark || {};
+    const items = Array.isArray(m.items) ? m.items : [];
+    const wrongItem = items.find(it=>!it.ok) || items[0] || {};
+    const focusLabel = m.focusLabel || "Detail";
+    const focusTag = m.focusTag || "detail";
+    const top = Array.isArray(m.topTags) ? m.topTags : [];
+    const also = top.filter(t=>t && t.label && t.tag && t.tag!==focusTag).slice(0,3).map(t=>t.label);
+    const passed = !!m.passed;
+    const mustGym = !!state.gymRequired;
+
+    const vibe = passed
+      ? "Good. But we polish it. Standards."
+      : "No excuses. We fix the cog and we go again.";
+
+    const line2 = mustGym
+      ? "Gym is required. Earn the exit. Then you come back sharper."
+      : "You can go Gym for bonus reps, or review feedback and move on.";
+
+    const focusWhy = (reasonMap[focusTag] || "We fix one thing, properly.");
+    const drillLine = (drillMap[focusTag] || "Quick reps. Then back in.");
+    const prompt = String(wrongItem.prompt||"").trim();
+    const ans = String(wrongItem.answer||"").trim();
+    const model = buildSuggestionForItem(prompt, ans, state.lang, levelRubric(state.level), focusTag);
+
+    const html = `
+      <div style="font-size:15px; font-weight:900; letter-spacing:.2px">${escapeHtml(vibe)}</div>
+      <div class="muted" style="margin-top:6px">${escapeHtml(line2)}</div>
+      <div class="hr" style="margin:12px 0"></div>
+      <div><b>Today’s focus:</b> ${escapeHtml(focusLabel)}</div>
+      <div class="muted" style="margin-top:6px"><b>Why:</b> ${escapeHtml(focusWhy)}</div>
+      <div class="muted" style="margin-top:6px"><b>${escapeHtml(drillLine)}</b></div>
+      ${also.length ? `<div class="muted" style="margin-top:8px"><b>Also watch:</b> ${escapeHtml(also.join(" · "))}</div>` : ""}
+      ${prompt ? `<div class="muted" style="margin-top:10px"><b>Prompt:</b> ${escapeHtml(prompt)}</div>` : ""}
+      ${(ans && ans!=="—") ? `<div class="muted" style="margin-top:6px"><b>You wrote:</b> ${escapeHtml(ans)}</div>` : ""}
+      ${(model) ? `<div class="muted" style="margin-top:6px"><b>Coach model:</b> ${escapeHtml(model)}</div>` : ""}
+      <div class="muted" style="margin-top:10px">Now choose your next move.</div>
+    `;
+
+    showCoachModal({
+      avatar: COACH.avatar,
+      title: COACH.name,
+      sub: mustGym ? "Touchline Verdict • Gym required" : "Touchline Verdict",
+      html,
+      primaryText: mustGym ? "Enter Gym" : "Review Feedback",
+      secondaryText: mustGym ? "Review Feedback" : "Gym (optional)",
+      onPrimary: ()=>{ if(mustGym) openGymFromResults(); else { state.showCorrections=true; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"});}catch(_){ } } },
+      onSecondary: ()=>{ if(mustGym){ state.showCorrections=true; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"});}catch(_){ } } else { openGymFromResults(); } }
+    });
+  }catch(_){}
+}
+
 }
 
 function showRewardPop(last){
@@ -1421,7 +1475,17 @@ function scaffoldForPrompt(text, level, lang){
           const aiCorrection = ai.correction || ai.correct || ai.model || ai.example_answer || ai.exemplar || ai.rewrite || ai.ideal || ai.suggested || "";
           const aiTip = ai.tip || ai.next_tip || ai.advice || ai.hint || "";
           const aiWhy = ai.reason || ai.rationale || ai.notes || "";
-          const betterSuggestion = (aiCorrection && String(aiCorrection).trim()) ? String(aiCorrection).trim() : it.suggestion;
+          let betterSuggestion = it.suggestion;
+if(aiCorrection && String(aiCorrection).trim()){
+  const cand = String(aiCorrection).trim();
+  const p = String(it.prompt||"").toLowerCase();
+  const c = cand.toLowerCase();
+  const L = state.lang;
+  let ok = true;
+  // Simple sanity checks to avoid "place" language for "object" prompts (telephone etc.)
+  if(L==="es" && /telephone|tel[eé]fono|teléfono|m[oó]vil|mobile|cell(phone)?|smartphone/.test(p) && /(lugar|ciudad|pueblo|barrio|parque|centro)/.test(c)) ok = false;
+  if(ok) betterSuggestion = cand;
+}
           const betterTip = (aiTip && String(aiTip).trim()) ? String(aiTip).trim() : it.tip;
           const betterWhy = (aiWhy && String(aiWhy).trim()) ? String(aiWhy).trim() : it.why;
           return {...it, suggestion: betterSuggestion, tip: betterTip, why: betterWhy};
@@ -1519,6 +1583,7 @@ function scaffoldForPrompt(text, level, lang){
   // Keep corrections visible by default when mistakes exist
   renderResults();
   show("results");
+  presentCoachModal();
     }catch(err){
       console.error(err);
       // Fallback: still produce results so the player can always finish the round.
@@ -1554,7 +1619,9 @@ function scaffoldForPrompt(text, level, lang){
     }finally{
       state.isMarking = false;
       // Ensure results are visible if we have a mark payload
-      try{ if(state.mark){ renderResults(); show("results"); } }catch(_){ }
+      try{ if(state.mark){ renderResults(); show("results"); 
+      presentCoachModal();
+} }catch(_){ }
       setNavLocked(false);
     }
 }
@@ -1805,9 +1872,30 @@ function renderResults(){
 
   
   
+
+function pickGymRepTag(){
+  // Rotate between the main focus tag and a couple of other common tags from the round.
+  const main = state.workshop.focusTag || "detail";
+  const alt = Array.isArray(state.workshop.altTags) ? state.workshop.altTags : [];
+  const options = [main].concat(alt).filter((v,i,a)=>a.indexOf(v)===i);
+  // Prefer not repeating the same tag twice in a row
+  const last = state.workshop.lastRepTag || "";
+  let candidates = options.filter(t=>t!==last);
+  if(!candidates.length) candidates = options;
+  // Light weighting: main focus is most frequent, but not dominant
+  const bag = [];
+  candidates.forEach(t=>{
+    const w = (t===main) ? 3 : 2;
+    for(let i=0;i<w;i++) bag.push(t);
+  });
+  const pick = bag[Math.floor(Math.random()*bag.length)] || main;
+  state.workshop.lastRepTag = pick;
+  return pick;
+}
+
 function gymFocusType(){
   // Prefer explicit tag chosen by coach
-  const tag = state.workshop.focusTag || "";
+  const tag = state.workshop.activeTag || state.workshop.focusTag || "";
   if(tag==="spelling") return "spelling";
   if(tag==="verb_form") return "verbs";
   if(tag==="verb_ending") return "verbs";
@@ -1864,27 +1952,46 @@ function buildGymPool(){
     }
   }
   // Ensure at least 3 distinct prompt texts so streak drills can vary even if answers were blank.
-  try{
-    const distinct = set(list=>{
-      const s=new Set();
-      for(const x of list){ const k=String(x.prompt||'').trim().toLowerCase(); if(k) s.add(k); }
-      return s;
-    });
-    let dp = distinct(pool);
-    if(dp.size < 3 && Array.isArray(state.prompts)){
-      const existing = dp;
-      for(let j=0;j<state.prompts.length && dp.size<3;j++){
-        const pr = state.prompts[j] && state.prompts[j].text ? String(state.prompts[j].text).trim() : '';
-        const k = pr.toLowerCase();
-        if(!pr || existing.has(k)) continue;
-        existing.add(k);
-        pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"", tags:["detail"], _idx:j, _key:(pr+"|—").slice(0,220)});
-        dp = existing;
-      }
+  
+try{
+  const distinctPrompts = (list)=>{
+    const st = new Set();
+    for(const x of list){
+      const k = String(x && x.prompt ? x.prompt : "").trim().toLowerCase();
+      if(k) st.add(k);
     }
-  }catch(e){}
+    return st;
+  };
+  let dp = distinctPrompts(pool);
 
-  return pool;
+  // If we don't have enough distinct prompts for variety, add extra prompt-only items
+  // from the current theme's prompt bank (never repeats existing prompts).
+  const themeIdx = (THEME_BY_ID[state.themeId] ? THEME_BY_ID[state.themeId].idx : 0);
+  const bank = Array.isArray(PROMPT_BANK[themeIdx]) ? PROMPT_BANK[themeIdx] : [];
+  const want = 5; // aim for at least 5 distinct prompts in Gym pool
+  for(let k=0;k<bank.length && dp.size < want && pool.length < 18;k++){
+    const pr = bank[k] && bank[k].text ? String(bank[k].text).trim() : "";
+    const key = pr.toLowerCase();
+    if(!pr || dp.has(key)) continue;
+    dp.add(key);
+    pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"",
+      tags:["detail"], _idx:k, _key:(pr+"|—").slice(0,220)});
+  }
+
+  // Final safety: ensure at least 3 distinct prompts
+  dp = distinctPrompts(pool);
+  if(dp.size < 3 && Array.isArray(state.prompts)){
+    for(let j=0;j<state.prompts.length && dp.size<3 && pool.length<18;j++){
+      const pr = state.prompts[j] && state.prompts[j].text ? String(state.prompts[j].text).trim() : '';
+      const key = pr.toLowerCase();
+      if(!pr || dp.has(key)) continue;
+      dp.add(key);
+      pool.push({prompt: pr, answer:"—", ok:false, reason:"", suggestion:"", tip:"", why:"",
+        tags:["detail"], _idx:j, _key:(pr+"|—").slice(0,220)});
+    }
+  }
+}catch(e){}
+return pool;
 }
 
 function pickGymItem(preferTag){
@@ -1928,6 +2035,15 @@ function openGymFromResults(){
   state.workshop.cleared = false;
   state.workshop.focus = focusLabel;
   state.workshop.focusTag = focusTag;
+
+// For variety: allow Gym reps to rotate through the top 3 error cogs (not just one).
+try{
+  const top = Array.isArray(state.mark.topTags) ? state.mark.topTags : [];
+  const alt = top.map(t=>t && t.tag).filter(Boolean).filter(t=>t!==focusTag).slice(0,3);
+  state.workshop.altTags = alt;
+}catch(_){ state.workshop.altTags = []; }
+state.workshop.lastRepTag = "";
+state.workshop.recentRepSigs = [];
   state.workshop.refItem = refItem;
   state.workshop.currentItem = null;
   state.workshop.pool = buildGymPool();
@@ -1976,12 +2092,31 @@ function openGymFromResults(){
 
   function nextGymDrill(){
     // Pick a fresh source item to avoid repetition and keep drills tied to the learner's own work
-    state.workshop.currentItem = pickGymItem(state.workshop.focusTag);
+    state.workshop.currentItem = pickGymItem(state.workshop.activeTag || state.workshop.focusTag);
 
+        state.workshop.activeTag = pickGymRepTag();
     const type = gymFocusType();
     let variant = Math.random() < 0.55 ? "choice" : "type";
     if(state.workshop.lastVariant && state.workshop.lastVariant===variant) variant = (variant==="choice"?"type":"choice");
     state.workshop.lastVariant = variant;
+
+// Avoid repeating the exact same exercise back-to-back (same prompt + type + variant)
+try{
+  const sig = (String((state.workshop.currentItem&&state.workshop.currentItem.prompt)||"").trim() + "|" + String(type) + "|" + String(variant)).slice(0,280);
+  const recent = Array.isArray(state.workshop.recentRepSigs) ? state.workshop.recentRepSigs : [];
+  if(recent.includes(sig)){
+    // Try a different prompt first
+    for(let tries=0; tries<5; tries++){
+      state.workshop.currentItem = pickGymItem(state.workshop.activeTag || state.workshop.focusTag);
+      const sig2 = (String((state.workshop.currentItem&&state.workshop.currentItem.prompt)||"").trim() + "|" + String(type) + "|" + String(variant)).slice(0,280);
+      if(!recent.includes(sig2)){ break; }
+      // flip variant as last resort
+      variant = (variant==="choice" ? "type" : "choice");
+    }
+  }
+  const nextRecent = [sig].concat(recent.filter(x=>x!==sig)).slice(0,8);
+  state.workshop.recentRepSigs = nextRecent;
+}catch(_){}
 
     // Helpers for language-specific tokens
     const L = state.lang;
@@ -2422,7 +2557,7 @@ if(el.rewardOk){
     if(el.quitBtn) el.quitBtn.addEventListener("click", ()=>{ clearInterval(state.timer); state.isMarking=false; state.roundFinished=false; show("home"); renderThemeTiles(); });
     if(el.playAgainBtn) el.playAgainBtn.addEventListener("click", ()=> startRound());
     if(el.workshopBtn) el.workshopBtn.addEventListener("click", ()=> openGymFromResults());
-    if(el.toggleFeedbackBtn) el.toggleFeedbackBtn.addEventListener("click", ()=>{ state.showCorrections = !state.showCorrections; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"smooth", block:"start"}); }catch(_){ } });
+    if(el.toggleFeedbackBtn) el.toggleFeedbackBtn.addEventListener("click", ()=>{ state.showCorrections = !state.showCorrections; renderResults(); try{ el.feedbackList && el.feedbackList.scrollIntoView({behavior:"auto", block:"start"}); }catch(_){ } });
     if(el.homeBtn) el.homeBtn.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
     if(el.wsBackResults) el.wsBackResults.addEventListener("click", ()=> show("results"));
     if(el.wsHome) el.wsHome.addEventListener("click", ()=>{ show("home"); renderThemeTiles(); });
